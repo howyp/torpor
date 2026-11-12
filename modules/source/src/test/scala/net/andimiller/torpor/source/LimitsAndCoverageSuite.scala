@@ -4,24 +4,24 @@ import cats.data.NonEmptyList
 import cats.effect.IO
 import io.circe.{Decoder, Encoder}
 import net.andimiller.torpor.core.{FieldCoordinate, Plan, Value}
+import net.andimiller.torpor.macros.schema
 import net.andimiller.torpor.schema.{Executable, Schema, SdlFragment}
 
 import java.util.concurrent.atomic.AtomicInteger
 
 final case class CoveragePet(id: String, ownerId: String) derives Decoder, Encoder.AsObject
-final case class CoverageArgs(first: Option[Int]) derives Decoder
 
 class LimitsAndCoverageSuite extends munit.FunSuite {
 
   private val petsSdl =
-    """type Pet { id: ID! name: String! }
+    schema"""type Pet { id: ID! name: String! }
       |extend type Query { pets(first: Int = 20): [Pet!]! }
-      |""".stripMargin
+      |"""
 
   private val ownersSdl =
-    """type Owner { id: ID! name: String! }
+    schema"""type Owner { id: ID! name: String! }
       |extend type Pet { owner: Owner! }
-      |""".stripMargin
+      |"""
 
   private val pet = CoveragePet("p1", "o1")
 
@@ -29,9 +29,9 @@ class LimitsAndCoverageSuite extends munit.FunSuite {
   private def sources(serveOwners: Boolean = true, serveUnused: Boolean = false): List[Source[IO]] = {
     val pets = Source[IO](
       "pets",
-      petsSdl,
+      petsSdl.text,
       Resolvers[IO](
-        resolver.root[IO]("Query" / "pets") { (args: CoverageArgs) => IO(List(pet)) }
+        resolver.root[IO](petsSdl.Query.pets) { _ => IO(List(pet)) }
       )
     )
 
@@ -39,7 +39,7 @@ class LimitsAndCoverageSuite extends munit.FunSuite {
       if (serveOwners)
         Resolvers[IO](
           resolver
-            .field[IO]("Pet" / "owner")
+            .field[IO](ownersSdl.Pet.owner)
             .key((p: CoveragePet) => p.ownerId)
             .batch((keys: NonEmptyList[String]) => IO(keys.toList.map(k => k -> "Ada").toMap))
         )
@@ -50,7 +50,7 @@ class LimitsAndCoverageSuite extends munit.FunSuite {
       if (serveUnused)
         Resolvers[IO](
           resolver
-            .field[IO]("Pet" / "name")
+            .field[IO](petsSdl.Pet.name)
             .key((p: CoveragePet) => p.id)
             .batch((keys: NonEmptyList[String]) => IO(keys.toList.map(k => k -> "x").toMap))
         )
@@ -58,7 +58,7 @@ class LimitsAndCoverageSuite extends munit.FunSuite {
 
     List(
       pets,
-      Source[IO]("owners", ownersSdl, ownerResolvers),
+      Source[IO]("owners", ownersSdl.text, ownerResolvers),
       Source[IO]("unused", "", unused)
     )
   }

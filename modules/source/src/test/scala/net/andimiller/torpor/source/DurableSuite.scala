@@ -5,25 +5,25 @@ import cats.effect.unsafe.IORuntime
 import cats.syntax.all._
 import io.circe.{Decoder, Encoder, Json}
 import net.andimiller.torpor.core.Step
+import net.andimiller.torpor.macros.schema
 import net.andimiller.torpor.schema.Schema
 import net.andimiller.torpor.snapshot.*
 
 import java.util.concurrent.atomic.AtomicInteger
 
-final case class DurableArgs(species: String) derives Decoder
 final case class DurableReport(species: String, adoptions: Int) derives Encoder.AsObject, Decoder
 final case class DurablePet(id: String, name: String) derives Encoder.AsObject, Decoder
 
 final class DurableSuite extends munit.FunSuite {
   import cats.effect.unsafe.implicits.global
 
-  private val petsSdl    = """type Pet { id: ID! name: String! }
+  private val petsSdl    = schema"""type Pet { id: ID! name: String! }
                              |extend type Query { pets: [Pet!]! }
-                             |""".stripMargin
-  private val reportsSdl = """type AdoptionReport { species: Species! adoptions: Int! }
+                             |"""
+  private val reportsSdl = schema"""type AdoptionReport { species: Species! adoptions: Int! }
                              |enum Species { DOG CAT }
                              |extend type Query { adoptionReport(species: Species!): AdoptionReport! }
-                             |""".stripMargin
+                             |"""
 
   private val query = """{ pets { name } adoptionReport(species: DOG) { adoptions } }"""
 
@@ -36,9 +36,9 @@ final class DurableSuite extends munit.FunSuite {
     Torpor[IO](
       Source[IO](
         "pets",
-        petsSdl,
+        petsSdl.text,
         Resolvers[IO](
-          resolver.root[IO]("Query" / "pets") { (_: Json) =>
+          resolver.root[IO](petsSdl.Query.pets) { _ =>
             IO {
               calls.pets.incrementAndGet()
               List(DurablePet("p1", "Rex"))
@@ -48,11 +48,10 @@ final class DurableSuite extends munit.FunSuite {
       ),
       Source[IO](
         "reports",
-        reportsSdl,
+        reportsSdl.text,
         Resolvers[IO](
-          resolver.suspending[IO, DurableArgs, String, DurableReport]("Query" / "adoptionReport") {
-            (args: DurableArgs) =>
-              IO(Step.suspend(s"job-${args.species}"))
+          resolver.suspending[IO](reportsSdl.Query.adoptionReport) { args =>
+            IO(Step.suspend(s"job-${args.species}"))
           } { (handle: String, payload: Json) =>
             IO {
               calls.resume.incrementAndGet()
@@ -191,7 +190,7 @@ final class DurableSuite extends munit.FunSuite {
                                                             |extend type Query { pets: [Pet!]! }
                                                             |""".stripMargin
           ),
-          net.andimiller.torpor.schema.SdlFragment("reports", reportsSdl)
+          net.andimiller.torpor.schema.SdlFragment("reports", reportsSdl.text)
         )
       )
       .fold(errors => fail(errors.toChain.toList.map(_.render).mkString("; ")), identity)

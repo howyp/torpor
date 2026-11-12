@@ -3,15 +3,11 @@ package net.andimiller.torpor.source
 import cats.effect.IO
 import io.circe.Decoder
 import net.andimiller.torpor.core.{Argument, FieldCoordinate, Resolver, Value}
+import net.andimiller.torpor.macros.schema
 
-final class TypedRootSuite extends munit.CatsEffectSuite {
+final class RootResolverSuite extends munit.CatsEffectSuite {
 
-  private type PetsArgs = Arguments[(("species", Option[String]), ("first", Option[Int]))] {
-    val species: Option[String]; val first: Option[Int]
-  }
-
-  // what the schema macro would emit for `pets(species: String, first: Int): [String!]!`
-  private val pets = FieldCoordinate("Query", "pets").asInstanceOf[FieldCoordinate.Of["Query", "pets", PetsArgs, "Pet"]]
+  private val pets = schema"""extend type Query { pets(species: String, first: Int): [String!]! }""".Query.pets
 
   private def run(entry: (FieldCoordinate, Resolver[IO]), arguments: Argument*): IO[io.circe.Json] =
     entry match {
@@ -19,7 +15,7 @@ final class TypedRootSuite extends munit.CatsEffectSuite {
       case (coordinate, other)     => IO(fail(s"${coordinate.render} registered $other, not a root resolver"))
     }
 
-  test("a typed coordinate types the lambda's arguments, so no arguments class is needed") {
+  test("the SDL types the lambda's arguments") {
     val entry = resolver.root[IO](pets) { args => IO(args.species.toList ++ args.first.map(_.toString)) }
 
     run(entry, Argument("species", Value.StringValue("DOG")), Argument("first", Value.IntValue(2)))
@@ -36,12 +32,5 @@ final class TypedRootSuite extends munit.CatsEffectSuite {
 
     val entry = resolver.root[IO](pets).args[Species] { args => IO(args.species.getOrElse("any")) }
     run(entry).map(json => assertEquals(json.as[String], Right("any")))
-  }
-
-  test("a plain coordinate still names its argument type") {
-    final case class Species(species: Option[String]) derives Decoder
-
-    val entry = resolver.root[IO]("Query" / "pets") { (args: Species) => IO(args.species.getOrElse("any")) }
-    run(entry, Argument("species", Value.StringValue("CAT"))).map(json => assertEquals(json.as[String], Right("CAT")))
   }
 }

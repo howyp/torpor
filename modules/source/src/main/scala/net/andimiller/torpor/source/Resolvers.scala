@@ -19,25 +19,19 @@ object Resolvers {
   def empty[F[_]]: Resolvers[F]                                           = Resolvers(Nil)
 }
 
-/** `"Pet" / "owner"` reads better than `FieldCoordinate("Pet", "owner")` at call sites. */
-extension (typeName: String) def /(fieldName: String): FieldCoordinate = FieldCoordinate(typeName, fieldName)
-
 // wiring code imports `source.*`; these are what it declares and reads
 export net.andimiller.torpor.core.{Arguments, Scalar}
 
 object resolver {
 
-  /** A root field. With a coordinate from the schema macro, the lambda's `args` is typed from the SDL's arguments:
-    * `resolver.root[IO](sdl.Query.character) { args => args.id … }`; `.args[A]` decodes them as `A` instead. With a
-    * plain `FieldCoordinate`, the lambda names its argument type.
+  /** A root field. The lambda's `args` is typed from the SDL's arguments: `resolver.root[IO](sdl.Query.character) {
+    * args => args.id … }`; `.args[A]` decodes them as `A` instead.
     */
   def root[F[_]]: RootStart[F] = new RootStart[F]
 
   final class RootStart[F[_]] {
     def apply[T <: String, N <: String, A, R <: String](coordinate: FieldCoordinate.Of[T, N, A, R]): TypedRoot[F, A] =
       new TypedRoot[F, A](coordinate)
-
-    def apply(coordinate: FieldCoordinate): RootBuilder[F] = new RootBuilder[F](coordinate)
   }
 
   /** A root field whose arguments type `A` the SDL decided. */
@@ -56,14 +50,37 @@ object resolver {
       new RootBuilder[F](coordinate).apply[A, B](run)
   }
 
-  /** A root field that may park the run. The handle is encoded into the snapshot and decoded back on resume; the
-    * webhook payload stays raw JSON, because it arrives from outside.
+  /** A root field that may park the run. Its `args` is typed from the SDL, like a root field's. The handle is encoded
+    * into the snapshot and decoded back on resume; the webhook payload stays raw JSON, because it arrives from outside.
     */
-  def suspending[F[_], A, H, B](coordinate: FieldCoordinate)(
-      start: A => F[Step[B, H]]
-  )(
-      resume: (H, io.circe.Json) => F[Step[B, H]]
-  )(using Functor[F], Decoder[A], Encoder[H], Decoder[H], Encoder[B]): (FieldCoordinate, Resolver[F]) =
+  def suspending[F[_]]: SuspendingStart[F] = new SuspendingStart[F]
+
+  final class SuspendingStart[F[_]] {
+    def apply[T <: String, N <: String, A, R <: String](coordinate: FieldCoordinate.Of[T, N, A, R]): Suspending[F, A] =
+      new Suspending[F, A](coordinate)
+  }
+
+  final class Suspending[F[_], A](coordinate: FieldCoordinate) {
+    inline def apply[H, B](start: A => F[Step[B, H]])(resume: (H, Json) => F[Step[B, H]])(using
+        functor: Functor[F],
+        encodeHandle: Encoder[H],
+        decodeHandle: Decoder[H],
+        encoder: Encoder[B]
+    ): (FieldCoordinate, Resolver[F]) =
+      suspendingEntry[F, A, H, B](coordinate, start, resume)(using
+        functor,
+        Arguments.decoder[A],
+        encodeHandle,
+        decodeHandle,
+        encoder
+      )
+  }
+
+  private def suspendingEntry[F[_]: Functor, A: Decoder, H: Encoder: Decoder, B: Encoder](
+      coordinate: FieldCoordinate,
+      start: A => F[Step[B, H]],
+      resume: (H, Json) => F[Step[B, H]]
+  ): (FieldCoordinate, Resolver[F]) =
     coordinate -> Resolver.Suspending(
       start = arguments =>
         val json = Json.obj(arguments.map(a => a.name -> a.value.toJson): _*)
@@ -87,18 +104,29 @@ object resolver {
         }
     )
 
-  def field[F[_]](coordinate: FieldCoordinate): FieldBuilder[F] = new FieldBuilder[F](coordinate)
+  def field[F[_]]: FieldStart[F] = new FieldStart[F]
+
+  final class FieldStart[F[_]] {
+    def apply[T <: String, N <: String, A, R <: String](coordinate: FieldCoordinate.Of[T, N, A, R]): FieldBuilder[F] =
+      new FieldBuilder[F](coordinate)
+  }
 
   /** A keyed field whose key may be absent (a nullable foreign key). Absent keys are never sent to `batch`; they
     * resolve to `null`, which is what "no value" means for a nullable field, and is not an error.
     */
-  def optionalField[F[_]](coordinate: FieldCoordinate): OptionalFieldBuilder[F] =
-    new OptionalFieldBuilder[F](coordinate)
+  def optionalField[F[_]]: OptionalFieldStart[F] = new OptionalFieldStart[F]
+
+  final class OptionalFieldStart[F[_]] {
+    def apply[T <: String, N <: String, A, R <: String](
+        coordinate: FieldCoordinate.Of[T, N, A, R]
+    ): OptionalFieldBuilder[F] =
+      new OptionalFieldBuilder[F](coordinate)
+  }
 
   /** Not a valid JSON key encoding, so it cannot collide with a real key: encoded keys start with a JSON token. */
   private val AbsentKey = "\u0000absent"
 
-  final class RootBuilder[F[_]](coordinate: FieldCoordinate) {
+  private[source] final class RootBuilder[F[_]](coordinate: FieldCoordinate) {
     def apply[A, B](run: A => F[B])(using Functor[F], Decoder[A], Encoder[B]): (FieldCoordinate, Resolver[F]) =
       coordinate -> Resolver.Root { arguments =>
         val json = Json.obj(arguments.map(a => a.name -> a.value.toJson): _*)
