@@ -29,7 +29,7 @@ extend type Constellation { region: Region! }
 
 Each source's SDL is a `schema"""…"""` literal, so it is parsed and validated when this file compiles; the resolvers
 take their coordinates from the same value (`characters.Query.character`), and the text goes straight into
-`Source[IO]("characters", characters.text)(…)`. Merged at startup, the whole schema is also what a golden test would compare.
+`Source[IO]("characters", characters)(…)`. Merged at startup, the whole schema is also what a golden test would compare.
 
 Each source's type records what its resolvers produce and decode, so `Torpor[IO](charactersSource, universeSource, routesSource)`
 checks the links between them when it compiles: `Character.corporation` decodes each character as `EsiCharacter` to

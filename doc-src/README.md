@@ -49,7 +49,7 @@ val universe = schema"""type Corporation { id: ID! name: String! }
 // 4. Wire up resolution: a root field's `args` are typed from its SDL arguments (`args.id: Option[Long]`), and a
 //    hydrated field takes a batch of keys. Hydration only runs when the client selects it, and then once for the
 //    whole set.
-val charactersSource = Source[IO]("characters", characters.text)(
+val charactersSource = Source[IO]("characters", characters)(
   resolver.root[IO](characters.Query.character) { args =>
     args.id match {
       case Some(id) => esi.characters(NonEmptyList.one(id)).map(_.get(id))
@@ -62,7 +62,7 @@ val charactersSource = Source[IO]("characters", characters.text)(
   }
 )
 
-val universeSource = Source[IO]("universe", universe.text)(
+val universeSource = Source[IO]("universe", universe)(
   resolver.field[IO](universe.Character.corporation)
     .key((character: EsiCharacter) => character.corporationId)
     .batch((ids: NonEmptyList[Long]) => esi.corporations(ids))

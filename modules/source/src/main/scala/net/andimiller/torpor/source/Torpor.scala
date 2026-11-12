@@ -41,7 +41,7 @@ enum QueryError                        {
   * The registry is built once. `checkCoverage` is the startup gate: it reports every SDL field that has no resolver and
   * every resolver that has no field, before any request arrives.
   */
-final class Torpor[F[_]: Concurrent] private (sources: List[Source[F, ?, ?]], limits: Planner.Limits) {
+final class Torpor[F[_]: Concurrent] private (sources: List[Source[F, ?, ?, ?]], limits: Planner.Limits) {
 
   private val registry: Map[(String, FieldCoordinate), Resolver[F]] =
     sources
@@ -133,17 +133,17 @@ final class Torpor[F[_]: Concurrent] private (sources: List[Source[F, ?, ?]], li
 
 object Torpor {
 
-  /** One `(id, facts)` pair per source, which is what `LinkCheck` reads. */
+  /** One `(id, required, facts)` triple per source, which is what `LinkCheck` reads. */
   type SourcesOf[Ss] <: Tuple = Ss match {
-    case Source[?, id, facts] => (id, facts) *: EmptyTuple
-    case EmptyTuple           => EmptyTuple
-    case s *: rest            => Tuple.Concat[SourcesOf[s], SourcesOf[rest]]
+    case Source[?, id, required, facts] => (id, required, facts) *: EmptyTuple
+    case EmptyTuple                     => EmptyTuple
+    case s *: rest                      => Tuple.Concat[SourcesOf[s], SourcesOf[rest]]
   }
 
   def apply[F[_]]: Start[F] = new Start[F]
 
   // inline methods cannot call a private constructor, so they come through here
-  private def assemble[F[_]: Concurrent](sources: List[Source[F, ?, ?]]): Torpor[F] =
+  private def assemble[F[_]: Concurrent](sources: List[Source[F, ?, ?, ?]]): Torpor[F] =
     new Torpor[F](sources, Planner.Limits.none)
 
   final class Start[F[_]] {
@@ -156,11 +156,11 @@ object Torpor {
       assemble[F](untyped(sources))
     }
 
-    private def untyped(sources: Matchable): List[Source[F, ?, ?]] = sources match {
-      case source: Source[F, ?, ?] @unchecked => List(source)
-      case tuple: Tuple                       =>
+    private def untyped(sources: Matchable): List[Source[F, ?, ?, ?]] = sources match {
+      case source: Source[F, ?, ?, ?] @unchecked => List(source)
+      case tuple: Tuple                          =>
         tuple.productIterator.toList.flatMap(element => untyped(element.asInstanceOf[Matchable]))
-      case other                              => throw new IllegalArgumentException(s"not a source: $other")
+      case other                                 => throw new IllegalArgumentException(s"not a source: $other")
     }
   }
 }

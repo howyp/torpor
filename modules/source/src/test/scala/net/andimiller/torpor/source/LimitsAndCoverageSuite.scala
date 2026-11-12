@@ -23,9 +23,9 @@ class LimitsAndCoverageSuite extends munit.FunSuite {
 
   private val pet = CoveragePet("p1", "o1")
 
-  private val pets = Source[IO]("pets", petsSdl.text)(resolver.root[IO](petsSdl.Query.pets) { _ => IO(List(pet)) })
+  private val pets = Source[IO]("pets", petsSdl)(resolver.root[IO](petsSdl.Query.pets) { _ => IO(List(pet)) })
 
-  private val owners = Source[IO]("owners", ownersSdl.text)(
+  private val owners = Source[IO]("owners", ownersSdl)(
     resolver
       .field[IO](ownersSdl.Pet.owner)
       .key((p: CoveragePet) => p.ownerId)
@@ -33,10 +33,11 @@ class LimitsAndCoverageSuite extends munit.FunSuite {
   )
 
   /** Declares `Pet.owner` but serves nothing, which is what the startup check must catch. */
-  private val unservedOwners = Source[IO]("owners", ownersSdl.text)
+  private val unservedOwners = Source[IO]("owners", ownersSdl)
 
   /** `Pet.name` is declared in the type definition, so nothing should resolve it; registering one is a mistake. */
-  private val unused = Source[IO]("unused", "")(
+  private val petsWithName = Source[IO]("pets", petsSdl)(
+    resolver.root[IO](petsSdl.Query.pets) { _ => IO(List(pet)) },
     resolver
       .field[IO](petsSdl.Pet.name)
       .key((p: CoveragePet) => p.id)
@@ -121,7 +122,7 @@ class LimitsAndCoverageSuite extends munit.FunSuite {
   }
 
   test("a resolver for a field that needs none is reported") {
-    val torpor = Torpor[IO](pets, owners, unused)
+    val torpor = Torpor[IO](petsWithName, owners)
 
     torpor.checkCoverage(schemaOf(torpor)) match {
       case Right(_)     => fail("expected a coverage error for Pet.name")
