@@ -41,13 +41,11 @@ enum QueryError                        {
   * The registry is built once. `checkCoverage` is the startup gate: it reports every SDL field that has no resolver and
   * every resolver that has no field, before any request arrives.
   */
-final class Torpor[F[_]: Concurrent](sources: List[Source[F]], limits: Planner.Limits = Planner.Limits.none) {
+final class Torpor[F[_]: Concurrent](sources: List[Source[F, ?, ?]], limits: Planner.Limits = Planner.Limits.none) {
 
   private val registry: Map[(String, FieldCoordinate), Resolver[F]] =
     sources
-      .flatMap(source =>
-        source.resolvers.entries.map { case (coordinate, resolver) => (source.id -> coordinate) -> resolver }
-      )
+      .flatMap(source => source.entries.map { case (coordinate, resolver) => (source.id -> coordinate) -> resolver })
       .toMap
 
   def withLimits(limits: Planner.Limits): Torpor[F] = new Torpor[F](sources, limits)
@@ -134,7 +132,7 @@ final class Torpor[F[_]: Concurrent](sources: List[Source[F]], limits: Planner.L
 }
 
 object Torpor {
-  def apply[F[_]: Concurrent](sources: Source[F]*): Torpor[F] = new Torpor[F](sources.toList)
+  def apply[F[_]: Concurrent](sources: Source[F, ?, ?]*): Torpor[F] = new Torpor[F](sources.toList)
 }
 
 object Variables {

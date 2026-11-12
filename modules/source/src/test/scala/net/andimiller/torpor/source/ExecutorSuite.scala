@@ -63,52 +63,40 @@ final class ExecutorSuite extends munit.CatsEffectSuite {
   private final class Fixture(ownersFail: Boolean = false, omitOwner: Option[OwnerId] = None) {
     val calls = new Calls
 
-    private val petsSource = Source[IO](
-      "pets",
-      petsSdl.text,
-      Resolvers[IO](
-        resolver.root[IO](petsSdl.Query.pets) { args =>
-          IO {
-            calls.pets.incrementAndGet()
-            pets.filter(p => args.species.forall(_ == p.species)).take(args.first.getOrElse(20))
-          }
+    private val petsSource = Source[IO]("pets", petsSdl.text)(
+      resolver.root[IO](petsSdl.Query.pets) { args =>
+        IO {
+          calls.pets.incrementAndGet()
+          pets.filter(p => args.species.forall(_ == p.species)).take(args.first.getOrElse(20))
         }
-      )
+      }
     )
 
-    private val ownersSource = Source[IO](
-      "owners",
-      ownersSdl.text,
-      Resolvers[IO](
-        resolver
-          .field[IO](ownersSdl.Pet.owner)
-          .key((pet: Pet) => pet.ownerId)
-          .batch { (keys: NonEmptyList[OwnerId]) =>
-            IO {
-              calls.owners.incrementAndGet()
-              calls.ownersKeys.set(keys.size)
-              if (ownersFail) throw new RuntimeException("owners service unavailable")
-              owners
-                .filter(owner => keys.toList.contains(owner.id) && !omitOwner.contains(owner.id))
-                .map(owner => owner.id -> owner)
-                .toMap
-            }
+    private val ownersSource = Source[IO]("owners", ownersSdl.text)(
+      resolver
+        .field[IO](ownersSdl.Pet.owner)
+        .key((pet: Pet) => pet.ownerId)
+        .batch { (keys: NonEmptyList[OwnerId]) =>
+          IO {
+            calls.owners.incrementAndGet()
+            calls.ownersKeys.set(keys.size)
+            if (ownersFail) throw new RuntimeException("owners service unavailable")
+            owners
+              .filter(owner => keys.toList.contains(owner.id) && !omitOwner.contains(owner.id))
+              .map(owner => owner.id -> owner)
+              .toMap
           }
-      )
+        }
     )
 
     // `Species` is declared by the pets source, so this fragment cannot type the argument: decode it as a class
-    private val reportsSource = Source[IO](
-      "reports",
-      reportsSdl.text,
-      Resolvers[IO](
-        resolver.root[IO](reportsSdl.Query.adoptionReport).args[ReportArgs] { args =>
-          IO {
-            calls.reports.incrementAndGet()
-            AdoptionReport(args.species, 42)
-          }
+    private val reportsSource = Source[IO]("reports", reportsSdl.text)(
+      resolver.root[IO](reportsSdl.Query.adoptionReport).args[ReportArgs] { args =>
+        IO {
+          calls.reports.incrementAndGet()
+          AdoptionReport(args.species, 42)
         }
-      )
+      }
     )
 
     val torpor = Torpor[IO](petsSource, ownersSource, reportsSource)

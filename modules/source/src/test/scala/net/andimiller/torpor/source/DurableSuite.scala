@@ -34,32 +34,24 @@ final class DurableSuite extends munit.FunSuite {
 
   private def torpor(calls: Calls): Torpor[IO] =
     Torpor[IO](
-      Source[IO](
-        "pets",
-        petsSdl.text,
-        Resolvers[IO](
-          resolver.root[IO](petsSdl.Query.pets) { _ =>
-            IO {
-              calls.pets.incrementAndGet()
-              List(DurablePet("p1", "Rex"))
-            }
+      Source[IO]("pets", petsSdl.text)(
+        resolver.root[IO](petsSdl.Query.pets) { _ =>
+          IO {
+            calls.pets.incrementAndGet()
+            List(DurablePet("p1", "Rex"))
           }
-        )
+        }
       ),
-      Source[IO](
-        "reports",
-        reportsSdl.text,
-        Resolvers[IO](
-          resolver.suspending[IO](reportsSdl.Query.adoptionReport) { args =>
-            IO(Step.suspend(s"job-${args.species}"))
-          } { (handle: String, payload: Json) =>
-            IO {
-              calls.resume.incrementAndGet()
-              val adoptions = payload.hcursor.get[Int]("adoptions").getOrElse(0)
-              Step.complete(DurableReport("DOG", adoptions))
-            }
+      Source[IO]("reports", reportsSdl.text)(
+        resolver.suspending[IO](reportsSdl.Query.adoptionReport) { args =>
+          IO(Step.suspend(s"job-${args.species}"))
+        } { (handle: String, payload: Json) =>
+          IO {
+            calls.resume.incrementAndGet()
+            val adoptions = payload.hcursor.get[Int]("adoptions").getOrElse(0)
+            Step.complete(DurableReport("DOG", adoptions))
           }
-        )
+        }
       )
     )
 
