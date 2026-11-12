@@ -69,9 +69,9 @@ val universeSource = Source[IO]("universe", universe)(
 )
 
 // 5. Assemble. Each source's type records which fields its SDL needs resolved and what its resolvers produce and
-//    decode, so this checks, when it compiles, that every source resolves exactly the fields it must (here
-//    `Query.character` and `Character.corporation`), and that the sources link: `Character.corporation` reads
-//    `corporationId` from each character, and `characters` produces characters as `EsiCharacter`, which has it.
+//    read, so this checks, when it compiles, that every source resolves exactly the fields it must (here
+//    `Query.character` and `Character.corporation`), and that the sources link: `Character.corporation` reads each
+//    character as `EsiCharacter`, which is what `characters` produces, so it gets the produced value, not its JSON.
 //    `startup` merges the fragments, repeats the coverage check against the merged schema, and raises one exception
 //    listing every problem. Running it is what makes the schema servable.
 val started: IO[(Torpor[IO], net.andimiller.torpor.schema.Schema)] = Torpor[IO](charactersSource, universeSource).startup

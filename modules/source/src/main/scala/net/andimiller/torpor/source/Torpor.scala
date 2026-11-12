@@ -43,14 +43,20 @@ enum QueryError                        {
   * sees what one fragment cannot, such as a root type that another source's `schema { … }` names. Either way it reports
   * every SDL field that has no resolver and every resolver that has no field, before any request arrives.
   */
-final class Torpor[F[_]: Concurrent] private (sources: List[Source[F, ?, ?, ?]], limits: Planner.Limits) {
+final class Torpor[F[_]: Concurrent] private (
+    sources: List[Source[F, ?, ?, ?]],
+    links: Map[FieldCoordinate, Links.ByProducer],
+    limits: Planner.Limits
+) {
 
   private val registry: Map[(String, FieldCoordinate), Resolver[F]] =
-    sources
-      .flatMap(source => source.entries.map { case (coordinate, resolver) => (source.id -> coordinate) -> resolver })
-      .toMap
+    sources.flatMap { source =>
+      source.entries.map { case (coordinate, resolver) =>
+        (source.id -> coordinate) -> resolver(links.getOrElse(coordinate, Map.empty))
+      }
+    }.toMap
 
-  def withLimits(limits: Planner.Limits): Torpor[F] = new Torpor[F](sources, limits)
+  def withLimits(limits: Planner.Limits): Torpor[F] = new Torpor[F](sources, links, limits)
 
   def schema: Either[NonEmptyChain[net.andimiller.torpor.schema.SchemaError], Schema] =
     // a source may exist only to serve fields another source declares, so a blank fragment is not an error
@@ -135,7 +141,7 @@ final class Torpor[F[_]: Concurrent] private (sources: List[Source[F, ?, ?, ?]],
 
 object Torpor {
 
-  /** One `(id, required, facts)` triple per source, which is what `Coverage` and `LinkCheck` read. */
+  /** One `(id, required, facts)` triple per source, which is what `Coverage` and `Links` read. */
   type SourcesOf[Ss] <: Tuple = Ss match {
     case Source[?, id, required, facts] => (id, required, facts) *: EmptyTuple
     case EmptyTuple                     => EmptyTuple
@@ -145,19 +151,21 @@ object Torpor {
   def apply[F[_]]: Start[F] = new Start[F]
 
   // inline methods cannot call a private constructor, so they come through here
-  private def assemble[F[_]: Concurrent](sources: List[Source[F, ?, ?, ?]]): Torpor[F] =
-    new Torpor[F](sources, Planner.Limits.none)
+  private def assemble[F[_]: Concurrent](
+      sources: List[Source[F, ?, ?, ?]],
+      links: Map[FieldCoordinate, Links.ByProducer]
+  ): Torpor[F] =
+    new Torpor[F](sources, links, Planner.Limits.none)
 
   final class Start[F[_]] {
 
     /** `Torpor[IO](charactersSource, universeSource)`, in any order. Does not compile if a source does not resolve
-      * exactly the fields its SDL requires, or if a keyed resolver decodes its parent as a type with a field that some
-      * producer of that parent type does not have.
+      * exactly the fields its SDL requires, or if a keyed resolver reads its parent as a type that some producer of
+      * that parent type cannot give it (see `Links`).
       */
     inline def apply[Ss <: Matchable](sources: Ss)(using Concurrent[F]): Torpor[F] = {
       Coverage.verify[SourcesOf[Ss]]
-      LinkCheck.verify[SourcesOf[Ss]]
-      assemble[F](untyped(sources))
+      assemble[F](untyped(sources), Links.of[SourcesOf[Ss]])
     }
 
     private def untyped(sources: Matchable): List[Source[F, ?, ?, ?]] = sources match {

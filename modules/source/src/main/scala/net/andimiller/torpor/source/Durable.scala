@@ -139,10 +139,13 @@ final class Durable[F[_]: Concurrent](
         torpor.resolverFor(node.source, node.field) match {
           case Some(Resolver.Suspending(_, resumeFn)) =>
             attemptResume(resumeFn(handle, payload)).map {
-              case Right(Step.Complete(json))  =>
-                StepResult.Complete(NodeResult(List(pathOf(rootKeys.get(id)) -> json), cats.data.Chain.empty))
-              case Right(Step.Suspend(handle)) => StepResult.Suspend(handle)
-              case Left(t)                     =>
+              case Right(Step.Complete(resolved)) =>
+                val path = pathOf(rootKeys.get(id))
+                StepResult.Complete(
+                  NodeResult(List(path -> resolved.json), cats.data.Chain.empty, Map(path -> resolved.value))
+                )
+              case Right(Step.Suspend(handle))    => StepResult.Suspend(handle)
+              case Left(t)                        =>
                 StepResult.Complete(
                   NodeResult(
                     List(pathOf(rootKeys.get(id)) -> Json.Null),
@@ -164,8 +167,8 @@ final class Durable[F[_]: Concurrent](
 
   /** Resume can throw synchronously too (a handle that will not decode), so both channels are turned into errors. */
   private def attemptResume(
-      thunk: => F[Step[Json, Json]]
-  ): F[Either[Throwable, Step[Json, Json]]]                      =
+      thunk: => F[Step[Resolved, Json]]
+  ): F[Either[Throwable, Step[Resolved, Json]]]                  =
     try thunk.attempt
     catch { case t: Throwable => Concurrent[F].pure(Left(t)) }
 
