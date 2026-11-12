@@ -9,7 +9,8 @@ import net.andimiller.torpor.core.{Arguments, FieldCoordinate, InvalidInputExcep
 /** A source: an SDL fragment plus the resolvers that serve it.
   *
   * Its type keeps what the resolvers erase: `Facts` records, for each one, which GraphQL type it produces as which
-  * Scala type, and which Scala type a keyed field decodes its parent as.
+  * Scala type, and which Scala type a keyed field decodes its parent as. `Torpor[F](…)` reads them to check, when the
+  * code compiles, that every keyed field can decode what each producer of its parent type produces.
   *
   * {{{
   * Source[IO]("universe", universe.text)(
@@ -62,7 +63,7 @@ object Source {
 sealed trait Fact
 
 /** The resolver at `Parent.Field` produces values of GraphQL type `G`, as Scala type `B`. `B` is the resolver's own
-  * result type, so it may still be wrapped in `Option` or `List`.
+  * result type, so it may still be wrapped in `Option` or `List`; the check unwraps it.
   */
 sealed abstract class Produces[G <: String, B, Parent <: String, Field <: String] extends Fact
 
