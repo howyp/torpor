@@ -11,7 +11,7 @@ final class TypedRootSuite extends munit.CatsEffectSuite {
   }
 
   // what the schema macro would emit for `pets(species: String, first: Int): [String!]!`
-  private val pets = FieldCoordinate("Query", "pets").asInstanceOf[FieldCoordinate.Of["Query", "pets", PetsArgs]]
+  private val pets = FieldCoordinate("Query", "pets").asInstanceOf[FieldCoordinate.Of["Query", "pets", PetsArgs, "Pet"]]
 
   private def run(entry: (FieldCoordinate, Resolver[IO]), arguments: Argument*): IO[io.circe.Json] =
     entry match {

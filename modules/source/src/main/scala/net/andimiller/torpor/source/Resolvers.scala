@@ -34,7 +34,7 @@ object resolver {
   def root[F[_]]: RootStart[F] = new RootStart[F]
 
   final class RootStart[F[_]] {
-    def apply[T <: String, N <: String, A](coordinate: FieldCoordinate.Of[T, N, A]): TypedRoot[F, A] =
+    def apply[T <: String, N <: String, A, R <: String](coordinate: FieldCoordinate.Of[T, N, A, R]): TypedRoot[F, A] =
       new TypedRoot[F, A](coordinate)
 
     def apply(coordinate: FieldCoordinate): RootBuilder[F] = new RootBuilder[F](coordinate)
