@@ -38,8 +38,10 @@ enum QueryError                        {
 
 /** The facade: merge sources into a schema, check coverage, plan a request, run it.
   *
-  * The registry is built once. `checkCoverage` is the startup gate: it reports every SDL field that has no resolver and
-  * every resolver that has no field, before any request arrives.
+  * The registry is built once. Coverage is checked twice. `Torpor[F](…)` checks each source against its own SDL when
+  * the code compiles; `checkCoverage` is the startup gate, and repeats the check against the merged schema, which also
+  * sees what one fragment cannot, such as a root type that another source's `schema { … }` names. Either way it reports
+  * every SDL field that has no resolver and every resolver that has no field, before any request arrives.
   */
 final class Torpor[F[_]: Concurrent] private (sources: List[Source[F, ?, ?, ?]], limits: Planner.Limits) {
 
@@ -133,7 +135,7 @@ final class Torpor[F[_]: Concurrent] private (sources: List[Source[F, ?, ?, ?]],
 
 object Torpor {
 
-  /** One `(id, required, facts)` triple per source, which is what `LinkCheck` reads. */
+  /** One `(id, required, facts)` triple per source, which is what `Coverage` and `LinkCheck` read. */
   type SourcesOf[Ss] <: Tuple = Ss match {
     case Source[?, id, required, facts] => (id, required, facts) *: EmptyTuple
     case EmptyTuple                     => EmptyTuple
@@ -148,10 +150,12 @@ object Torpor {
 
   final class Start[F[_]] {
 
-    /** `Torpor[IO](charactersSource, universeSource)`, in any order. Does not compile if a keyed resolver decodes its
-      * parent as a type with a field that some producer of that parent type does not have.
+    /** `Torpor[IO](charactersSource, universeSource)`, in any order. Does not compile if a source does not resolve
+      * exactly the fields its SDL requires, or if a keyed resolver decodes its parent as a type with a field that some
+      * producer of that parent type does not have.
       */
     inline def apply[Ss <: Matchable](sources: Ss)(using Concurrent[F]): Torpor[F] = {
+      Coverage.verify[SourcesOf[Ss]]
       LinkCheck.verify[SourcesOf[Ss]]
       assemble[F](untyped(sources))
     }

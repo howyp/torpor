@@ -10,8 +10,9 @@ import net.andimiller.torpor.core.{Arguments, FieldCoordinate, InvalidInputExcep
   *
   * Its type keeps what the resolvers erase. `Required` lists the fields its SDL needs resolved, as the `schema` macro
   * read them. `Facts` records, for each resolver, the field it serves, which GraphQL type it produces as which Scala
-  * type, and which Scala type a keyed field decodes its parent as. `Torpor[F](…)` reads `Facts` to check, when the code
-  * compiles, that every keyed field can decode what each producer of its parent type produces.
+  * type, and which Scala type a keyed field decodes its parent as. `Torpor[F](…)` reads both to check, when the code
+  * compiles, that every source resolves exactly its required fields, and that every keyed field can decode what each
+  * producer of its parent type produces.
   *
   * {{{
   * Source[IO]("universe", universe)(

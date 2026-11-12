@@ -96,6 +96,11 @@ final class LinkCheckSuite extends munit.CatsEffectSuite {
     assert(errors.contains("Match type reduction failed"), errors)
   }
 
+  test("a source with a resolver missing does not compile") {
+    val errors = compileErrors("""Torpor[IO](petsSource, Source[IO]("owners", owners))""")
+    assert(errors.contains("source 'owners' has no resolver for Pet.owner"), errors)
+  }
+
   test("a source takes its resolvers once") {
     val errors = compileErrors("""
       petsSource(resolver.root[IO](pets.Query.pet) { args => IO.pure(Option.empty[LinkedPet]) })

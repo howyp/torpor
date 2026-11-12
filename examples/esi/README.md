@@ -31,9 +31,11 @@ Each source's SDL is a `schema"""…"""` literal, so it is parsed and validated 
 take their coordinates from the same value (`characters.Query.character`), and the text goes straight into
 `Source[IO]("characters", characters)(…)`. Merged at startup, the whole schema is also what a golden test would compare.
 
-Each source's type records what its resolvers produce and decode, so `Torpor[IO](charactersSource, universeSource, routesSource)`
-checks the links between them when it compiles: `Character.corporation` decodes each character as `EsiCharacter` to
-read `corporationId`, so a `characters` source producing a type without that field does not compile.
+Each source's type records which fields its SDL needs resolved and what its resolvers produce and decode, so
+`Torpor[IO](charactersSource, universeSource, routesSource)` checks two things when it compiles. Every source resolves exactly
+the fields it must: commenting out the `Corporation.alliance` resolver is a compile error. And the sources link:
+`Character.corporation` decodes each character as `EsiCharacter` to read `corporationId`, so a `characters` source
+producing a type without that field does not compile.
 
 Three sources: `characters` owns `Character` and the root lookup; `routes` owns the route lookup and the two types it
 returns; `universe` owns everything that hydrates them — `corporation`, `alliance`, `SolarSystem.constellation`,
