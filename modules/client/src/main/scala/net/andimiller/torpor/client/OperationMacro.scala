@@ -44,8 +44,11 @@ object OperationMacro {
             case AppliedType(_, List(of)) => Shape.Many(shape(of, within))
             case _                        => Shape.Leaf(symbol.name)
           }
+        // a value class wraps one value, such as an id, so its own codec reads it
         // a recursive case class is checked once: beneath itself it is taken on trust
-        case _ if symbol.isClassDef && symbol.flags.is(Flags.Case) && !within(symbol.fullName)        =>
+        case _
+            if symbol.isClassDef && symbol.flags.is(Flags.Case) && !within(symbol.fullName) &&
+              !(dealiased <:< TypeRepr.of[AnyVal]) =>
           Shape.Record(
             symbol.name,
             symbol.caseFields.map(field => field.name -> shape(dealiased.memberType(field), within + symbol.fullName))

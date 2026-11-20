@@ -7,6 +7,13 @@ final case class Pets(pets: List[Pet]) derives Decoder
 final case class Pet(id: String, name: String, age: Option[Int], owner: Option[Owner]) derives Decoder
 final case class Owner(name: String) derives Decoder
 
+final case class PetId(value: String) extends AnyVal
+object PetId {
+  given Decoder[PetId] = Decoder.decodeString.map(PetId(_))
+}
+final case class PetWithId(id: PetId) derives Decoder
+final case class OnePetWithId(pet: Option[PetWithId]) derives Decoder
+
 final case class PetVariables(id: String) derives Encoder.AsObject
 final case class OptionalPetVariables(id: Option[String]) derives Encoder.AsObject
 final case class OnePet(pet: Option[PetName]) derives Decoder
@@ -46,6 +53,12 @@ final class OperationSuite extends munit.FunSuite {
     )
 
     assertEquals(home.name, Some("Home"))
+  }
+
+  test("a value class is read by its own decoder, like any other scalar") {
+    val pet = operation[PetVariables, OnePetWithId]("query P($id: ID!) { pet(id: $id) { id } }")
+
+    assertEquals(pet.name, Some("P"))
   }
 
   test("a document that is not valid against the schema does not compile") {
