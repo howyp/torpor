@@ -91,6 +91,85 @@ val server = started.flatMap { case (torpor, schema) =>
 Every line above is compiled by mdoc. The runnable version, with the ESI client from
 `examples/shared-esi`, real arguments and a live server, is [`examples/esi`](examples/esi).
 
+## The calling side
+
+A service that calls a GraphQL API states each operation once, with the case classes it writes the variables as and
+reads the response as. `torpor-client` checks all three against the schema when the code compiles, and generates
+nothing: the types are yours, with whatever codecs you give them.
+
+```scala mdoc:reset
+import cats.effect.IO
+import io.circe.{Decoder, Encoder}
+import net.andimiller.torpor.client.{GraphQLClient, Operation}
+import org.http4s.client.Client
+import org.http4s.implicits.*
+
+// 1. Write the types the operation is read and written as. A nullable field is an `Option`; a list is a collection;
+//    an object is a case class with exactly the fields the operation selects.
+final case class PetsVariables(species: Option[String], first: Option[Int]) derives Encoder.AsObject
+final case class Pets(pets: List[Pet]) derives Decoder
+final case class Pet(id: String, name: String, age: Option[Int], owner: Option[Owner]) derives Decoder
+final case class Owner(name: String) derives Decoder
+
+// 2. Point at the schema once. The file is SDL, such as the one `torpor-testkit` writes from a server's sources, so
+//    the caller checks against exactly what the server serves.
+inline def operation[V, D](inline document: String): Operation[V, D] =
+  Operation.checked[V, D]("modules/client/src/test/resources/petshop.graphqls", document)
+
+// 3. State the operation. This compiles only if the document is valid against the schema, `Pets` reads exactly what
+//    it selects, and `PetsVariables` has a field for each variable it declares.
+val pets = operation[PetsVariables, Pets](
+  "query Pets($species: Species, $first: Int) { pets(species: $species, first: $first) { id name age owner { name } } }"
+)
+
+// 4. Run it. Headers, authentication and tracing belong to the http4s `Client`, as for any other service. A variable
+//    that is `None` is left out, and errors in the response are raised as a `GraphQLFailure`.
+def firstTwo(http: Client[IO]): IO[Pets] =
+  new GraphQLClient[IO](http, uri"https://pets.example/graphql").run(pets, PetsVariables(species = None, first = Some(2)))
+```
+
+What does not compile, and what the compiler says:
+
+```scala mdoc:fail
+// `Pet` reads `owner`, but the operation no longer selects it
+operation[Unit, Pets]("{ pets { id name age } }")
+```
+
+```scala mdoc:fail
+// `nickname` is not a field of `Pet` in the schema
+operation[Unit, Pets]("{ pets { id name age nickname owner { name } } }")
+```
+
+```scala mdoc:fail
+final case class Ages(pets: List[Age]) derives Decoder
+final case class Age(age: Int) derives Decoder
+
+// `age` is nullable in the schema, so it is read as an `Option`
+operation[Unit, Ages]("{ pets { age } }")
+```
+
+A field selected in a fragment that only some types match, or behind `@skip` or `@include`, may be missing from the
+response, so it is read as an `Option` too. That makes `@include` a natural way to ask for part of a response only
+when it is wanted:
+
+```scala mdoc
+final case class HomeVariables(id: String, withCapacity: Boolean) derives Encoder.AsObject
+final case class HomeOf(home: Option[Home]) derives Decoder
+final case class Home(name: String, capacity: Option[Int]) derives Decoder
+
+val home = operation[HomeVariables, HomeOf](
+  """query Home($id: ID!, $withCapacity: Boolean!) {
+       home(pet: $id) {
+         ... on Owner { name }
+         ... on Shelter { name capacity @include(if: $withCapacity) }
+       }
+     }"""
+)
+```
+
+`name` is selected for every member of the union, so it is read as it is; `capacity` is a field of one member, so it is
+an `Option`.
+
 ## Why
 
 **The contract is data; the code is code.** The SDL is a text artefact: reviewable, diffable, sendable to a
