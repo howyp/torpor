@@ -1,7 +1,6 @@
 package net.andimiller.torpor.client
 
 import io.circe.{Decoder, Encoder, Json, JsonObject}
-import net.andimiller.torpor.core.Scalar
 import net.andimiller.torpor.schema.{Executable, Selection, TypeKind, TypeRef as GqlType}
 
 import scala.quoted.*
@@ -14,16 +13,31 @@ object TypedMacro {
     *
     * A GraphQL type becomes a Scala type the way the server's `schema` macro types arguments: nullable is `Option`, a
     * list is `List`, an object is a nested record. A field selected in a fragment only some types match, or behind
-    * `@skip` or `@include`, is an `Option` too. A leaf is read as the type a `Scalar` binding in scope names, looked up
-    * first for the field (`Scalar["Pet.id", PetId]`) and then for its type (`Scalar["ID", Long]`). Unbound, `Int` is
-    * `Int`, `Float` is `Double`, `String`, `ID` and an enum are `String`, and any other scalar is circe `Json`.
+    * `@skip` or `@include`, is an `Option` too. A leaf is read as the type the [[Api]] binds it to, looked up first for
+    * the field (`Pet.id`) and then for its type (`ID`).
     */
-  def typed(schemaFile: Expr[String], document: Expr[String])(using Quotes): Expr[TypedOperation[?, ?, ?]] = {
+  def typed[File <: String: Type, Bindings <: Tuple: Type](
+      api: Expr[Api[File, Bindings]],
+      document: Expr[String]
+  )(using Quotes): Expr[TypedOperation[?, ?, ?]] = {
     import quotes.reflect.*
 
-    val file   = MacroSupport.schemaFile(schemaFile)
+    val file   = literalOf[File]
     val schema = MacroSupport.schema(file)
     val query  = MacroSupport.document(document)
+
+    val bindings: Map[String, TypeRepr] = {
+      def each(tpe: TypeRepr): List[(String, TypeRepr)] = tpe.dealias match {
+        case AppliedType(_, List(AppliedType(_, List(name, bound)), rest)) =>
+          name.dealias match {
+            case ConstantType(StringConstant(value)) => (value -> bound) :: each(rest)
+            case _                                   => each(rest)
+          }
+        case _                                                             => Nil
+      }
+      // a later `read` of the same name comes first in the type, and wins
+      each(TypeRepr.of[Bindings]).reverse.toMap
+    }
 
     val validated = Executable.validate(schema, query) match {
       case Left(errors) =>
@@ -39,39 +53,21 @@ object TypedMacro {
     def tuple(elements: List[TypeRepr]): TypeRepr =
       elements.foldRight(TypeRepr.of[EmptyTuple])((element, rest) => TypeRepr.of[*:].appliedTo(List(element, rest)))
 
-    def bound(name: String): Option[TypeRepr] =
-      Implicits.search(TypeRepr.of[Scalar].appliedTo(List(literal(name), TypeBounds.empty))) match {
-        case found: ImplicitSearchSuccess =>
-          found.tree.tpe.widen.baseType(TypeRepr.of[Scalar].typeSymbol) match {
-            case AppliedType(_, List(_, scala)) => Some(scala)
-            case _                              => None
-          }
-        case _                            => None
-      }
-
-    /** The type a leaf is read as, and the decoder in scope for it. */
-    def leaf(field: Check.Field, name: String, path: String): (TypeRepr, Expr[Decoder[?]]) = {
-      val tpe = bound(s"${field.owner}.${field.name}").orElse(bound(name)).getOrElse {
-        name match {
-          case "Int"                                                           => TypeRepr.of[Int]
-          case "Float"                                                         => TypeRepr.of[Double]
-          case "Boolean"                                                       => TypeRepr.of[Boolean]
-          case "String" | "ID"                                                 => TypeRepr.of[String]
-          case _ if schema.types.get(name).exists(_.kind == TypeKind.EnumType) => TypeRepr.of[String]
-          case _                                                               => TypeRepr.of[Json]
-        }
-      }
-      tpe.asType match {
-        case '[t] =>
-          Expr.summon[Decoder[t]] match {
-            case Some(decoder) => (tpe, decoder)
-            case None          =>
-              report.errorAndAbort(
-                s"$path is read as ${tpe.show}, which has no Decoder in scope. It is ${field.owner}.${field.name}: $name in the schema."
-              )
+    /** The type a leaf is read as, and its decoder: the one the API was given for a binding, or circe's own. */
+    def leaf(field: Check.Field, name: String): (TypeRepr, Expr[Decoder[?]]) =
+      List(s"${field.owner}.${field.name}", name).find(bindings.contains) match {
+        case Some(key) => (bindings(key), '{ $api.decoders(${ Expr(key) }) })
+        case None      =>
+          name match {
+            case "Int"                                                           => (TypeRepr.of[Int], '{ Decoder.decodeInt })
+            case "Float"                                                         => (TypeRepr.of[Double], '{ Decoder.decodeDouble })
+            case "Boolean"                                                       => (TypeRepr.of[Boolean], '{ Decoder.decodeBoolean })
+            case "String" | "ID"                                                 => (TypeRepr.of[String], '{ Decoder.decodeString })
+            case _ if schema.types.get(name).exists(_.kind == TypeKind.EnumType) =>
+              (TypeRepr.of[String], '{ Decoder.decodeString })
+            case _                                                               => (TypeRepr.of[Json], '{ Decoder.decodeJson })
           }
       }
-    }
 
     def record(parent: String, selections: List[(String, Selection)], path: String): (TypeRepr, Expr[Decoder[?]]) = {
       val fields  = check.fields(parent, selections).map { field =>
@@ -106,7 +102,7 @@ object TypedMacro {
           schema.types.get(name).map(_.kind) match {
             case Some(TypeKind.ObjectType | TypeKind.InterfaceType | TypeKind.UnionType) =>
               record(name, field.selections, path)
-            case _                                                                       => leaf(field, name, path)
+            case _                                                                       => leaf(field, name)
           }
       }
 

@@ -146,8 +146,8 @@ The calling side: `torpor-client` checks an operation when the code that states 
 | Enums, ids and custom scalars | not checked: read as any type that is not a case class or a collection, whose decoder decides |
 | The variables type checked: one field per declared variable, no `Option` for one that must be given a value | yes |
 | Input object variables checked field by field | no: the encoder decides |
-| `Operation.typed`: the response type written from the document, as a record with a member per selected field | yes |
-| Leaves read as the type a `Scalar` binding names, for a field (`"Pet.id"`) or for its type (`"ID"`) | yes |
+| `Api.at(file).operation(document)`: the response type written from the document, as a record with a member per selected field | yes |
+| Leaves read as the type the `Api` binds with `read`, for a field (`"Pet.id"`) or for its type (`"ID"`) | yes |
 | Variables given by name and checked against the declared ones, with optional ones left out | yes |
 | Input objects written with `input(…)` and checked against the schema's input type | yes; a list of differently-shaped inputs is taken on trust |
 | A type of the caller's own standing for a whole input object, encoded by its own `Encoder` | yes |

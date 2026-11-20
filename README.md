@@ -121,7 +121,7 @@ inline def operation[V, D](inline document: String): Operation[V, D] =
 val pets = operation[PetsVariables, Pets](
   "query Pets($species: Species, $first: Int) { pets(species: $species, first: $first) { id name age owner { name } } }"
 )
-// pets: Operation[PetsVariables, Pets] = net.andimiller.torpor.client.Operation@65517b0b
+// pets: Operation[PetsVariables, Pets] = net.andimiller.torpor.client.Operation@43f55958
 
 // 4. Run it. Headers, authentication and tracing belong to the http4s `Client`, as for any other service. A variable
 //    that is `None` is left out, and errors in the response are raised as a `GraphQLFailure`.
@@ -143,7 +143,7 @@ val everyPet = operation[Unit, Pets](
     }
   """
 )
-// everyPet: Operation[Unit, Pets] = net.andimiller.torpor.client.Operation@f684dce
+// everyPet: Operation[Unit, Pets] = net.andimiller.torpor.client.Operation@744f5481
 ```
 
 What does not compile, and what the compiler says:
@@ -178,7 +178,7 @@ operation[Unit, Ages]("{ pets { age } }")
 // the operation does not fit the schema or its types:
 //   query.pets[].age is nullable in the schema, so it is read as an Option, not Int
 // val home = operation[HomeVariables, HomeOf](
-//            ^
+//                                           ^
 ```
 
 A field selected in a fragment that only some types match, or behind `@skip` or `@include`, may be missing from the
@@ -198,7 +198,7 @@ val home = operation[HomeVariables, HomeOf](
        }
      }"""
 )
-// home: Operation[HomeVariables, HomeOf] = net.andimiller.torpor.client.Operation@611c725d
+// home: Operation[HomeVariables, HomeOf] = net.andimiller.torpor.client.Operation@2f972102
 ```
 
 `name` is selected for every member of the union, so it is read as it is; `capacity` is a field of one member, so it is
@@ -206,21 +206,27 @@ an `Option`.
 
 ### Letting the macro write the types
 
-`Operation.typed` goes one step further, with the technique the server's `schema"…"` uses for arguments: the response
-type is written from the document, so there are no case classes to keep in step with it.
+`Api` goes one step further, with the technique the server's `schema"…"` uses for arguments: an operation's response
+type is written from its document, so there are no case classes to keep in step with it.
 
 ```scala
 import cats.effect.IO
-import net.andimiller.torpor.client.{GraphQLClient, Operation, input}
-import net.andimiller.torpor.core.Scalar
+import io.circe.Decoder
+import net.andimiller.torpor.client.{Api, GraphQLClient, input}
 
-// Say which Scala type a leaf is read as, for one field or for every field of a type. Unbound, an `ID` is a `String`.
 final case class PetId(value: String)
-given io.circe.Decoder[PetId] = io.circe.Decoder.decodeString.map(PetId(_))
-given Scalar["Pet.id", PetId]()
+given Decoder[PetId] = Decoder.decodeString.map(PetId(_))
 
-val pets = Operation.typed(
-  "modules/client/src/test/resources/petshop.graphqls",
+// 1. Name the schema once, and say which Scala type a leaf is read as: for one field, or for every field of a type.
+//    Unbound, an `ID` is a `String` and an `Int` an `Int`.
+val petshop = Api
+  .at("modules/client/src/test/resources/petshop.graphqls")
+  .read["Pet.id", PetId]
+  .read["Int", Long]
+// petshop: Api["modules/client/src/test/resources/petshop.graphqls", *:[Tuple2["Int", Long], *:[Tuple2["Pet.id", PetId], EmptyTuple]]] = net.andimiller.torpor.client.Api@3fc6dbbd
+
+// 2. State an operation. Its response type is written from the fields it selects.
+val pets = petshop.operation(
   """
     query Pets($species: Species, $first: Int) {
       pets(species: $species, first: $first) {
@@ -236,16 +242,17 @@ val pets = Operation.typed(
   val pets: List[Record {
     val id: PetId
     val name: String
-    val age: Option[Int]
+    val age: Option[Long]
     val owner: Option[Record {
       val name: String
     }]
   }]
-}] = net.andimiller.torpor.client.TypedOperation@2af8461d
+}] = net.andimiller.torpor.client.TypedOperation@3ac01190
 
-// Variables are given by name and checked against the ones the document declares. One that may be null can be left out.
-// The response is read by field: `name` is a `String`, `age` an `Option[Int]`, `id` a `PetId`.
-def names(client: GraphQLClient[IO]): IO[List[(PetId, String, Option[Int])]] =
+// 3. Give the variables by name, and read the response by field. `first` is checked against the variable the
+//    document declares, and `species` may be left out because it may be null. `id` is a `PetId`, `name` a `String`
+//    and `age` an `Option[Long]`.
+def names(client: GraphQLClient[IO]): IO[List[(PetId, String, Option[Long])]] =
   client.run(pets(first = 2)).map(_.pets.map(pet => (pet.id, pet.name, pet.age)))
 ```
 
@@ -255,7 +262,7 @@ A field the document does not select is not a member of the response, and a vari
 def species(data: pets.Data) = data.pets.map(_.species)
 // error:
 // value species is not a member of net.andimiller.torpor.client.Record{
-//   val id: MdocApp1.this.PetId; val name: String; val age: Option[Int];
+//   val id: MdocApp1.this.PetId; val name: String; val age: Option[Long];
 //     val owner: Option[net.andimiller.torpor.client.Record{val name: String}]
 // }
 // def species(data: pets.Data) = data.pets.map(_.species)
@@ -274,6 +281,9 @@ pets(first = "two")
 An input object is written with `input(…)`, which is checked against the schema's input type where it is passed:
 `shelves(filter = input(genre = "FICTION", minItems = 3))`. A field the input type lacks, or a required one left out,
 does not compile.
+
+The file and the bindings are part of the `Api` value's type, so nothing else has to be in scope where an operation is
+stated: no import that a formatter might judge unused.
 
 ## Why
 

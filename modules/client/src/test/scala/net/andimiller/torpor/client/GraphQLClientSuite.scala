@@ -2,7 +2,6 @@ package net.andimiller.torpor.client
 
 import cats.effect.IO
 import io.circe.Json
-import net.andimiller.torpor.core.Scalar
 import net.andimiller.torpor.http.TorporHttp
 import net.andimiller.torpor.macros.schema
 import net.andimiller.torpor.source.*
@@ -114,11 +113,10 @@ final class GraphQLClientSuite extends munit.CatsEffectSuite {
 
   // typed operations: no type is written for the response or the variables
 
-  private inline val petshop = "modules/client/src/test/resources/petshop.graphqls"
+  private val petshop = Api.at("modules/client/src/test/resources/petshop.graphqls")
 
   test("a typed operation's response is read by field, with the types the schema gives") {
-    val pets = Operation.typed(
-      petshop,
+    val pets = petshop.operation(
       """
         query Pets($species: Species, $first: Int) {
           pets(species: $species, first: $first) {
@@ -145,7 +143,7 @@ final class GraphQLClientSuite extends munit.CatsEffectSuite {
   }
 
   test("a typed operation with no variables is called with none") {
-    val everyPet = Operation.typed(petshop, "{ pets { name } }")
+    val everyPet = petshop.operation("{ pets { name } }")
 
     for {
       graphql <- client
@@ -154,8 +152,7 @@ final class GraphQLClientSuite extends munit.CatsEffectSuite {
   }
 
   test("a typed operation reads a union with one member's field as an Option, and a field behind @include too") {
-    val home = Operation.typed(
-      petshop,
+    val home = petshop.operation(
       """
         query Home($id: ID!, $withCapacity: Boolean!) {
           home(pet: $id) {
@@ -181,11 +178,9 @@ final class GraphQLClientSuite extends munit.CatsEffectSuite {
     }
   }
 
-  test("a typed operation reads a leaf as the type a Scalar binding names, for a field or for its type") {
-    given Scalar["Pet.id", PetId]()
-    given Scalar["Int", Long]()
-
-    val pets = Operation.typed(petshop, "{ pets { id age } }")
+  test("a typed operation reads a leaf as the type the API binds, for a field or for its type") {
+    val bound = petshop.read["Pet.id", PetId].read["Int", Long]
+    val pets  = bound.operation("{ pets { id age } }")
 
     for {
       graphql <- client
@@ -199,7 +194,7 @@ final class GraphQLClientSuite extends munit.CatsEffectSuite {
   }
 
   test("a variable given as None is left out of the request") {
-    val pets = Operation.typed(petshop, "query Pets($first: Int) { pets(first: $first) { name } }")
+    val pets = petshop.operation("query Pets($first: Int) { pets(first: $first) { name } }")
 
     assertEquals(pets(first = Option.empty[Int]).variables.toMap, Map.empty)
     assertEquals(pets(first = 2).variables.toMap.view.mapValues(_.noSpaces).toMap, Map("first" -> "2"))

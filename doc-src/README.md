@@ -187,21 +187,26 @@ an `Option`.
 
 ### Letting the macro write the types
 
-`Operation.typed` goes one step further, with the technique the server's `schema"…"` uses for arguments: the response
-type is written from the document, so there are no case classes to keep in step with it.
+`Api` goes one step further, with the technique the server's `schema"…"` uses for arguments: an operation's response
+type is written from its document, so there are no case classes to keep in step with it.
 
 ```scala mdoc:reset
 import cats.effect.IO
-import net.andimiller.torpor.client.{GraphQLClient, Operation, input}
-import net.andimiller.torpor.core.Scalar
+import io.circe.Decoder
+import net.andimiller.torpor.client.{Api, GraphQLClient, input}
 
-// Say which Scala type a leaf is read as, for one field or for every field of a type. Unbound, an `ID` is a `String`.
 final case class PetId(value: String)
-given io.circe.Decoder[PetId] = io.circe.Decoder.decodeString.map(PetId(_))
-given Scalar["Pet.id", PetId]()
+given Decoder[PetId] = Decoder.decodeString.map(PetId(_))
 
-val pets = Operation.typed(
-  "modules/client/src/test/resources/petshop.graphqls",
+// 1. Name the schema once, and say which Scala type a leaf is read as: for one field, or for every field of a type.
+//    Unbound, an `ID` is a `String` and an `Int` an `Int`.
+val petshop = Api
+  .at("modules/client/src/test/resources/petshop.graphqls")
+  .read["Pet.id", PetId]
+  .read["Int", Long]
+
+// 2. State an operation. Its response type is written from the fields it selects.
+val pets = petshop.operation(
   """
     query Pets($species: Species, $first: Int) {
       pets(species: $species, first: $first) {
@@ -214,9 +219,10 @@ val pets = Operation.typed(
   """
 )
 
-// Variables are given by name and checked against the ones the document declares. One that may be null can be left out.
-// The response is read by field: `name` is a `String`, `age` an `Option[Int]`, `id` a `PetId`.
-def names(client: GraphQLClient[IO]): IO[List[(PetId, String, Option[Int])]] =
+// 3. Give the variables by name, and read the response by field. `first` is checked against the variable the
+//    document declares, and `species` may be left out because it may be null. `id` is a `PetId`, `name` a `String`
+//    and `age` an `Option[Long]`.
+def names(client: GraphQLClient[IO]): IO[List[(PetId, String, Option[Long])]] =
   client.run(pets(first = 2)).map(_.pets.map(pet => (pet.id, pet.name, pet.age)))
 ```
 
@@ -233,6 +239,9 @@ pets(first = "two")
 An input object is written with `input(…)`, which is checked against the schema's input type where it is passed:
 `shelves(filter = input(genre = "FICTION", minItems = 3))`. A field the input type lacks, or a required one left out,
 does not compile.
+
+The file and the bindings are part of the `Api` value's type, so nothing else has to be in scope where an operation is
+stated: no import that a formatter might judge unused.
 
 ## Why
 

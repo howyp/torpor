@@ -13,12 +13,12 @@ final class Request[D](
     val decoder: Decoder[D]
 )
 
-/** An operation whose types the macro wrote from the schema: `Operation.typed(schemaFile, document)`.
+/** An operation whose types the macro wrote from the schema: `api.operation(document)`, for an [[Api]].
   *
   * `D` is the response: a [[Record]] with a member for each field the document selects. `Variables` lists the variables
   * the document declares, and `File` names the schema, which is what lets a call be checked:
   * {{{
-  * val pets = Operation.typed("schema.graphqls", "query Pets($first: Int) { pets(first: $first) { name } }")
+  * val pets = petshop.operation("query Pets($first: Int) { pets(first: $first) { name } }")
   *
   * client.run(pets(first = Some(2))).map(_.pets.map(_.name))
   * }}}

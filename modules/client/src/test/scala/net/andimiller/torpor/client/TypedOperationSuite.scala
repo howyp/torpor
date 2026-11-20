@@ -5,10 +5,9 @@ import io.circe.Json
 /** What compiles and what does not when an operation's types are written by the macro. */
 final class TypedOperationSuite extends munit.FunSuite {
 
-  private inline val library = "modules/client/src/test/resources/library.graphqls"
+  private val library = Api.at("modules/client/src/test/resources/library.graphqls")
 
-  private val shelves = Operation.typed(
-    library,
+  private val shelves = library.operation(
     """
       query Shelves($filter: ShelfFilter, $first: Int = 10, $names: [String!]!) {
         shelves(filter: $filter, first: $first, names: $names) {
@@ -107,20 +106,26 @@ final class TypedOperationSuite extends munit.FunSuite {
   }
 
   test("a document that is not valid against the schema does not compile") {
-    val errors = compileErrors(
-      """Operation.typed("modules/client/src/test/resources/library.graphqls", "{ shelves(names: []) { nickname } }")"""
-    )
+    val errors = compileErrors("""library.operation("{ shelves(names: []) { nickname } }")""")
 
     assert(errors.contains("nickname"), errors)
   }
 
-  test("a leaf bound to a type with no Decoder does not compile") {
+  test("a binding needs a Decoder for the type it names") {
     val errors = compileErrors(
       """final class Published
-         given net.andimiller.torpor.core.Scalar["Date", Published]()
-         Operation.typed("modules/client/src/test/resources/library.graphqls", "{ shelves(names: []) { published } }")"""
+         library.read["Date", Published]"""
     )
 
-    assert(errors.contains("which has no Decoder in scope"), errors)
+    assert(errors.contains("Decoder"), errors)
+  }
+
+  test("a later binding of the same name replaces an earlier one") {
+    val rebound =
+      library.read["Date", String].read["Date", java.time.LocalDate].operation("{ shelves(names: []) { published } }")
+
+    val published: Option[java.time.LocalDate] =
+      Option.empty[rebound.Data].flatMap(_.shelves.headOption).flatMap(_.published)
+    assertEquals(published, None)
   }
 }
