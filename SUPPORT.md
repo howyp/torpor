@@ -129,3 +129,23 @@ All three from `pitch.md` are met and tested:
   never caller credentials. A resolver that needs live caller credentials cannot suspend.
 - A deploy invalidates in-flight suspended runs (schema hash mismatch). No snapshot migration.
 - Suspension granularity is a plan node, not an entity: `Pet.owner` suspends for the whole group.
+
+## Client
+
+The calling side: `torpor-client` checks an operation when the code that states it compiles, and runs it over HTTP.
+
+| Feature | State |
+|---|---|
+| The document validated against an SDL file, with the same validator the server runs | yes |
+| The schema file found from the working directory, or from any directory above the calling source | yes |
+| The response type checked: a case class per object, with exactly the selected response keys | yes |
+| Nullable fields, and fields a fragment or `@skip`/`@include` may leave out, required to be `Option` | yes |
+| A field selected for every member of a union or interface read without `Option` | yes |
+| Lists required to be collections; `String`, `Boolean`, `Int`, `Float` checked against the Scala type | yes |
+| Enums, ids and custom scalars | not checked: read as any type that is not a case class or a collection, whose decoder decides |
+| The variables type checked: one field per declared variable, no `Option` for one that must be given a value | yes |
+| Input object variables checked field by field | no: the encoder decides |
+| Generated types | no: the types are written by hand and checked |
+| Running an operation over http4s, with response errors raised as `GraphQLFailure` | yes |
+| Partial data alongside errors | no: any error fails the call |
+| Subscriptions, `@defer`, persisted queries | no |

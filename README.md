@@ -134,6 +134,7 @@ Works today:
 | HTTP | `POST /graphql`, GraphQL errors as 200s; a `Request[F] => F[Unit]` setup hook for per-request context (`IOLocal`) |
 | Tools | introspection (`__schema`, `__type`) with unions, interfaces, inputs, scalars, defaults and deprecations, `Explain.mermaid` / `Explain.report` |
 | Relay | `torpor-relay`: `Connection[A]`, `PageInfo`, `PageArgs` and one slicing function for `first/after/last/before` |
+| Client | `torpor-client`: `Operation.checked[V, D](schemaFile, document)` compiles only if the document is valid against the SDL and `V` and `D` have the shape it gives them; `GraphQLClient` runs it over http4s |
 
 Not built yet — do not assume these work:
 
@@ -150,7 +151,8 @@ Not built yet — do not assume these work:
 - **Not a SQL engine.** If your data is relational and query shape is everything, use
   [Grackle](https://github.com/typelevel/grackle).
 - **Not ZIO.** `Torpor[F]` for `F[_]: Concurrent`.
-- **Not a client or a codegen.** [Caliban](https://github.com/ghostdogpr/caliban) covers that ground.
+- **Not a codegen.** `torpor-client` checks the operations and types you write against a schema file; it generates
+  nothing. [Caliban](https://github.com/ghostdogpr/caliban) covers generated clients.
 - **Not complete.** See [docs/roadmap.md](docs/roadmap.md) for what is next.
 
 ## Modules
@@ -165,6 +167,7 @@ Not built yet — do not assume these work:
 | `torpor-explain` | mermaid plan, per-level call report |
 | `torpor-relay` | Relay `Connection`/`PageInfo` slicing, no core change |
 | `torpor-http` | http4s routes, per-request context setup |
+| `torpor-client` | operations checked against the SDL at compile time, with the case classes they are read and written as; an http4s client to run them |
 | `torpor-testkit` | golden test for the merged contract: sources in, one `.graphqls` out, a diff if it drifts |
 
 Only `torpor-schema` imports `sangria.*` (the parser).
