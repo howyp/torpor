@@ -1,0 +1,141 @@
+package net.andimiller.torpor.client
+
+import java.nio.file.{Files, Path, Paths}
+
+import cats.syntax.all.*
+import net.andimiller.torpor.schema.{Schema, SdlFragment}
+
+import scala.quoted.*
+
+/** What the client's macros share: reading a string and a schema at compile time, and the shape of a Scala type. */
+private[client] object MacroSupport {
+
+  /** A string the compiler can read now: a literal, a constant such as an `inline val`, or literals and constants put
+    * together with `+`, with `s"…"`, or trimmed with `stripMargin`. That lets several operations share a selection.
+    */
+  def constant(expr: Expr[String])(using Quotes): Option[String] = {
+    import quotes.reflect.*
+    expr match {
+      case Expr(value)                                                     => Some(value)
+      case '{ ($left: String) + ($right: String) }                         => (constant(left), constant(right)).mapN(_ + _)
+      case '{ scala.Predef.augmentString($text).stripMargin }              => constant(text).map(_.stripMargin)
+      case '{ StringContext(${ Varargs(parts) }*).s(${ Varargs(args) }*) } =>
+        val texts  = parts.toList.traverse(constant).map(_.map(StringContext.processEscapes))
+        val values = args.toList.traverse {
+          case '{ $arg: String } => constant(arg)
+          case _                 => None
+        }
+        (texts, values).mapN((texts, values) => texts.zipAll(values, "", "").map(_ + _).mkString)
+      case other                                                           =>
+        other.asTerm.tpe.widenTermRefByName.dealias match {
+          case ConstantType(StringConstant(value)) => Some(value)
+          case _                                   => None
+        }
+    }
+  }
+
+  /** The operation's text, or a compile error saying what it may be built from. */
+  def document(expr: Expr[String])(using Quotes): String =
+    constant(expr).getOrElse(
+      quotes.reflect.report.errorAndAbort(
+        "the operation must be a constant string: a literal, or literals and inline vals joined with s\"…\" or +"
+      )
+    )
+
+  /** The schema in the named SDL file, or a compile error. */
+  def schema(file: String)(using Quotes): Schema = {
+    import quotes.reflect.*
+    val calledFrom = Position.ofMacroExpansion.sourceFile.getJPath.map(_.toAbsolutePath)
+    read(file, calledFrom) match {
+      case Left(problem) => report.errorAndAbort(problem)
+      case Right(sdl)    =>
+        Schema.merge(List(SdlFragment(file, sdl))) match {
+          case Left(errors)  => report.errorAndAbort(errors.toChain.toList.map(_.render).mkString("\n"))
+          case Right(merged) => merged
+        }
+    }
+  }
+
+  def schemaFile(expr: Expr[String])(using Quotes): String =
+    constant(expr).getOrElse(quotes.reflect.report.errorAndAbort("the schema file must be a constant string"))
+
+  /** The schema's text. A relative path is tried from the working directory, which under sbt is the build's root, and
+    * then from each directory above the calling source file, which is where an editor's compiler finds it.
+    */
+  private def read(file: String, calledFrom: Option[Path]): Either[String, String] = {
+    val asGiven    = Paths.get(file)
+    val ancestors  =
+      calledFrom.toList.flatMap(source => Iterator.iterate(source.getParent)(_.getParent).takeWhile(_ != null))
+    val candidates = (asGiven :: ancestors.map(_.resolve(file))).filter(Files.isRegularFile(_))
+    candidates.headOption match {
+      case Some(found) => Right(new String(Files.readAllBytes(found), "UTF-8"))
+      case None        =>
+        Left(
+          s"cannot find the schema file '$file' from the working directory or any directory above the calling source"
+        )
+    }
+  }
+
+  // collections that are not an `Iterable`, by the name of their class
+  private val collections = Set("NonEmptyList", "NonEmptyVector", "NonEmptyChain", "NonEmptySeq", "Chain")
+
+  /** The shape of a type: see [[Shape]]. An `InputObject` built with `input(…)` is a record of the fields it was given.
+    */
+  def shape(using q: Quotes)(tpe: q.reflect.TypeRepr): Shape = {
+    import q.reflect.*
+
+    val optionSymbol   = TypeRepr.of[Option[Any]].typeSymbol
+    val iterableSymbol = TypeRepr.of[Iterable[Any]].typeSymbol
+    val inputSymbol    = TypeRepr.of[InputObject[EmptyTuple]].typeSymbol
+
+    def fields(spec: TypeRepr, within: Set[String]): List[(String, Shape)] = spec.dealias match {
+      case AppliedType(_, List(AppliedType(_, List(ConstantType(StringConstant(name)), value)), rest)) =>
+        (name -> of(value, within)) :: fields(rest, within)
+      case _                                                                                           => Nil
+    }
+
+    /** Whether a tuple type spells out every element, as the fields of one `input(…)` do. */
+    def known(spec: TypeRepr): Boolean = spec.dealias match {
+      case AppliedType(cons, List(_, rest)) if cons.typeSymbol == TypeRepr.of[*:].typeSymbol => known(rest)
+      case other                                                                             => other =:= TypeRepr.of[EmptyTuple]
+    }
+
+    def of(tpe: TypeRepr, within: Set[String]): Shape = {
+      val dealiased = tpe.dealias
+      val symbol    = dealiased.typeSymbol
+      dealiased match {
+        // `Some(1)` and `None` are options too
+        case _ if dealiased <:< TypeRepr.of[Option[Any]]                                              =>
+          dealiased.baseType(optionSymbol) match {
+            case AppliedType(_, List(of1)) => Shape.Optional(of(of1, within))
+            case _                         => Shape.Optional(Shape.Leaf("Nothing"))
+          }
+        // several input objects in one list lose their fields to a common type, and are taken on trust
+        case AppliedType(_, List(spec)) if symbol == inputSymbol && !known(spec)                      =>
+          Shape.Leaf("input(…)")
+        case AppliedType(_, List(spec)) if symbol == inputSymbol                                      =>
+          Shape.Record("input(…)", fields(spec, within))
+        case AppliedType(_, List(of1)) if collections(symbol.name)                                    =>
+          Shape.Many(of(of1, within))
+        case _ if dealiased <:< TypeRepr.of[Iterable[Any]] && !(dealiased <:< TypeRepr.of[Map[?, ?]]) =>
+          dealiased.baseType(iterableSymbol) match {
+            case AppliedType(_, List(of1)) => Shape.Many(of(of1, within))
+            case _                         => Shape.Leaf(symbol.name)
+          }
+        // a value class wraps one value, such as an id, so its own codec reads it
+        // a recursive case class is checked once: beneath itself it is taken on trust
+        case _
+            if symbol.isClassDef && symbol.flags.is(Flags.Case) && !within(symbol.fullName) &&
+              !(dealiased <:< TypeRepr.of[AnyVal]) =>
+          Shape.Record(
+            symbol.name,
+            symbol.caseFields.map(field => field.name -> of(dealiased.memberType(field), within + symbol.fullName))
+          )
+        case _                                                                                        =>
+          Shape.Leaf(symbol.name)
+      }
+    }
+
+    of(tpe, Set.empty)
+  }
+}

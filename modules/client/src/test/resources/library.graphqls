@@ -1,0 +1,22 @@
+enum Genre {
+  FICTION
+  SCIENCE
+}
+
+scalar Date
+
+input ShelfFilter {
+  genre: Genre!
+  minItems: Int
+  or: [ShelfFilter!]
+}
+
+type Shelf {
+  name: String!
+  tags: [String!]!
+  published: Date
+}
+
+type Query {
+  shelves(filter: ShelfFilter, first: Int = 10, names: [String!]!): [Shelf!]!
+}

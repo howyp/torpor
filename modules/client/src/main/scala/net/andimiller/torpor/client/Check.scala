@@ -40,15 +40,46 @@ object Check {
         if (problems.isEmpty) Right(validated.operation.name) else Left(problems)
     }
 
-  /** A selected field: its type, what is selected beneath it, the types of parent whose response carries it, and
-    * whether a directive may leave it out.
+  /** A selected field: where the schema declares it, its type, what is selected beneath it, the types of parent whose
+    * response carries it, and whether a directive may leave it out.
     */
   final private case class Selected(
+      owner: String,
+      name: String,
       tpe: TypeRef,
       selections: List[(String, Selection)],
       on: Set[String],
       skippable: Boolean
   )
+
+  /** One response key of an object: the field the schema declares it as, its type, what is selected beneath it, and
+    * whether the response may leave it out.
+    */
+  final case class Field(
+      key: String,
+      owner: String,
+      name: String,
+      tpe: TypeRef,
+      selections: List[(String, Selection)],
+      conditional: Boolean
+  )
+
+  /** A type as SDL writes it, such as `[ID!]!`. */
+  def render(tpe: TypeRef): String = tpe match {
+    case TypeRef.Named(name) => name
+    case TypeRef.ListOf(of)  => s"[${render(of)}]"
+    case TypeRef.NonNull(of) => s"${render(of)}!"
+  }
+
+  /** The inverse of [[render]]. */
+  def parse(text: String): TypeRef =
+    if (text.endsWith("!")) TypeRef.NonNull(parse(text.dropRight(1)))
+    else if (text.startsWith("[")) TypeRef.ListOf(parse(text.drop(1).dropRight(1)))
+    else TypeRef.Named(text)
+
+  /** Scala types that can never be a whole input object. */
+  private val primitives: Set[String] =
+    Set("String", "Boolean", "Int", "Long", "Double", "Float", "BigInt", "BigDecimal", "Unit")
 
   private val leaves: Map[String, Set[String]] = Map(
     "String"  -> Set("String"),
@@ -58,7 +89,7 @@ object Check {
   )
 }
 
-final private class Check(schema: Schema, document: ExecutableDocument) {
+final private[client] class Check(schema: Schema, document: ExecutableDocument) {
 
   import Check.*
 
@@ -133,15 +164,82 @@ final private class Check(schema: Schema, document: ExecutableDocument) {
         }
     }
 
-  private def leaf(name: String, shape: Shape, path: String): List[String] =
+  private def leaf(name: String, shape: Shape, path: String, verb: String = "read"): List[String] =
     shape match {
       case Shape.Leaf(scala) =>
         leaves.get(name).filterNot(_.contains(scala)).toList.map { allowed =>
-          s"$path is a $name in the schema, so it is read as ${allowed.toList.sorted.mkString(" or ")}, not $scala"
+          s"$path is a $name in the schema, so it is $verb as ${allowed.toList.sorted.mkString(" or ")}, not $scala"
         }
       case other             =>
-        List(s"$path is the scalar or enum $name in the schema, so it cannot be read as ${other.render}")
+        List(s"$path is the scalar or enum $name in the schema, so it cannot be $verb as ${other.render}")
     }
+
+  /** A value given for an input of type `tpe`, or the absence of one. An input that must be given a value is not an
+    * `Option`; a list is a collection; an input object is a record with no field the schema lacks and every field the
+    * schema requires.
+    */
+  def input(tpe: TypeRef, hasDefault: Boolean, value: Option[Shape], path: String): List[String] =
+    (tpe, value) match {
+      case (TypeRef.NonNull(_), None) if !hasDefault                    => List(s"$path must be given a value")
+      case (_, None)                                                    => Nil
+      case (TypeRef.NonNull(_), Some(Shape.Optional(_))) if !hasDefault =>
+        List(s"$path must be given a value, so it cannot be an Option")
+      case (_, Some(Shape.Optional(inner)))                             => inputValue(tpe, inner, path)
+      case (_, Some(shape))                                             => inputValue(tpe, shape, path)
+    }
+
+  private def inputValue(tpe: TypeRef, shape: Shape, path: String): List[String] =
+    (tpe, shape) match {
+      case (TypeRef.NonNull(of), other)              => inputValue(of, other, path)
+      case (TypeRef.ListOf(of), Shape.Many(element)) => input(of, hasDefault = false, Some(element), s"$path[]")
+      case (TypeRef.ListOf(_), other)                =>
+        List(s"$path is a list in the schema, so it is written as a collection, not ${other.render}")
+      case (TypeRef.Named(name), other)              =>
+        schema.types.get(name) match {
+          case Some(definition) if definition.kind == TypeKind.InputObjectType =>
+            other match {
+              case Shape.Record(_, fields)                 =>
+                val declared = definition.fields.map(_.name).toSet
+                val unknown  = fields.map(_._1).filterNot(declared).map { field =>
+                  s"$path has a field '$field', which the input type $name does not have"
+                }
+                unknown ++ definition.fields.flatMap { field =>
+                  input(field.tpe, field.defaultValue.isDefined, fields.toMap.get(field.name), s"$path.${field.name}")
+                }
+              // a type of the caller's own stands for the whole input object: its encoder decides what is sent
+              case Shape.Leaf(scala) if !primitives(scala) => Nil
+              case notRecord                               =>
+                List(
+                  s"$path is the input type $name in the schema, so it is written with input(…), not ${notRecord.render}"
+                )
+            }
+          case _                                                               => leaf(name, other, path, verb = "written")
+        }
+    }
+
+  /** The response keys selected on `parent`, in the order the document first selects them. */
+  def fields(parent: String, selections: List[(String, Selection)]): List[Field] = {
+    val every    = possible(parent)
+    val selected = collect(selections, every, skippable = false)
+    selected.map(_._1).distinct.map { key =>
+      val found = selected.collect { case (`key`, field) => field }
+      Field(
+        key = key,
+        owner = found.head.owner,
+        name = found.head.name,
+        tpe = found.head.tpe,
+        selections = found.flatMap(_.selections),
+        conditional = found.forall(_.skippable) || !every.subsetOf(found.flatMap(_.on).toSet)
+      )
+    }
+  }
+
+  /** The type an operation's response starts from. */
+  def root(operation: OperationDefinition): Option[String] = operation.kind match {
+    case OperationKind.Query        => schema.query
+    case OperationKind.Mutation     => schema.mutation
+    case OperationKind.Subscription => schema.subscription
+  }
 
   /** A case class against the fields selected on `parent`. Each selection comes with the type it was written on. */
   private def record(parent: String, selections: List[(String, Selection)], shape: Shape, path: String): List[String] =
@@ -179,10 +277,26 @@ final private class Check(schema: Schema, document: ExecutableDocument) {
         skippable || selection.directives.exists(directive => directive.name == "skip" || directive.name == "include")
       selection match {
         case field: FieldSelection if field.name == "__typename" =>
-          List(field.responseKey -> Selected(TypeRef.NonNull(TypeRef.Named("String")), Nil, on, maybe))
+          List(
+            field.responseKey -> Selected(
+              written,
+              "__typename",
+              TypeRef.NonNull(TypeRef.Named("String")),
+              Nil,
+              on,
+              maybe
+            )
+          )
         case field: FieldSelection                               =>
           schema.types.get(written).flatMap(_.fields.find(_.name == field.name)).toList.map { definition =>
-            field.responseKey -> Selected(definition.tpe, field.selections.map(definition.tpe.named -> _), on, maybe)
+            field.responseKey -> Selected(
+              written,
+              field.name,
+              definition.tpe,
+              field.selections.map(definition.tpe.named -> _),
+              on,
+              maybe
+            )
           }
         case inline: InlineFragment                              =>
           val condition = inline.typeCondition.getOrElse(written)

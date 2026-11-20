@@ -2,6 +2,7 @@ package net.andimiller.torpor.client
 
 import cats.effect.IO
 import io.circe.Json
+import net.andimiller.torpor.core.Scalar
 import net.andimiller.torpor.http.TorporHttp
 import net.andimiller.torpor.macros.schema
 import net.andimiller.torpor.source.*
@@ -109,5 +110,98 @@ final class GraphQLClientSuite extends munit.CatsEffectSuite {
       case Left(raised: GraphQLFailure) => assertEquals(raised.errors.map(_.path), List(List("pet")))
       case other                        => fail(s"expected a GraphQLFailure, got $other")
     }
+  }
+
+  // typed operations: no type is written for the response or the variables
+
+  private inline val petshop = "modules/client/src/test/resources/petshop.graphqls"
+
+  test("a typed operation's response is read by field, with the types the schema gives") {
+    val pets = Operation.typed(
+      petshop,
+      """
+        query Pets($species: Species, $first: Int) {
+          pets(species: $species, first: $first) {
+            id
+            name
+            age
+            owner { name }
+          }
+        }
+      """
+    )
+
+    for {
+      graphql <- client
+      data    <- graphql.run(pets(first = Some(2)))
+    } yield {
+      val names: List[String]          = data.pets.map(_.name)
+      val ages: List[Option[Int]]      = data.pets.map(_.age)
+      val owners: List[Option[String]] = data.pets.map(_.owner.map(_.name))
+      assertEquals(names, List("Rex", "Fido"))
+      assertEquals(ages, List(Some(3), None))
+      assertEquals(owners, List(Some("Ada"), Some("Ada")))
+    }
+  }
+
+  test("a typed operation with no variables is called with none") {
+    val everyPet = Operation.typed(petshop, "{ pets { name } }")
+
+    for {
+      graphql <- client
+      data    <- graphql.run(everyPet())
+    } yield assertEquals(data.pets.map(_.name), List("Rex", "Fido", "Bo"))
+  }
+
+  test("a typed operation reads a union with one member's field as an Option, and a field behind @include too") {
+    val home = Operation.typed(
+      petshop,
+      """
+        query Home($id: ID!, $withCapacity: Boolean!) {
+          home(pet: $id) {
+            __typename
+            ... on Owner { name }
+            ... on Shelter { name capacity @include(if: $withCapacity) }
+          }
+        }
+      """
+    )
+
+    for {
+      graphql <- client
+      shown   <- graphql.run(home(id = "1", withCapacity = true))
+      hidden  <- graphql.run(home(id = "1", withCapacity = false))
+    } yield {
+      val name: Option[String]  = shown.home.map(_.name)
+      val capacity: Option[Int] = shown.home.flatMap(_.capacity)
+      assertEquals(shown.home.map(_.__typename), Some("Shelter"))
+      assertEquals(name, Some("Paws"))
+      assertEquals(capacity, Some(40))
+      assertEquals(hidden.home.flatMap(_.capacity), None)
+    }
+  }
+
+  test("a typed operation reads a leaf as the type a Scalar binding names, for a field or for its type") {
+    given Scalar["Pet.id", PetId]()
+    given Scalar["Int", Long]()
+
+    val pets = Operation.typed(petshop, "{ pets { id age } }")
+
+    for {
+      graphql <- client
+      data    <- graphql.run(pets())
+    } yield {
+      val ids: List[PetId]         = data.pets.map(_.id)
+      val ages: List[Option[Long]] = data.pets.map(_.age)
+      assertEquals(ids, List(PetId("1"), PetId("2"), PetId("3")))
+      assertEquals(ages, List(Some(3L), None, Some(7L)))
+    }
+  }
+
+  test("a variable given as None is left out of the request") {
+    val pets = Operation.typed(petshop, "query Pets($first: Int) { pets(first: $first) { name } }")
+
+    assertEquals(pets(first = Option.empty[Int]).variables.toMap, Map.empty)
+    assertEquals(pets(first = 2).variables.toMap.view.mapValues(_.noSpaces).toMap, Map("first" -> "2"))
   }
 }

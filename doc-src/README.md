@@ -185,6 +185,55 @@ val home = operation[HomeVariables, HomeOf](
 `name` is selected for every member of the union, so it is read as it is; `capacity` is a field of one member, so it is
 an `Option`.
 
+### Letting the macro write the types
+
+`Operation.typed` goes one step further, with the technique the server's `schema"…"` uses for arguments: the response
+type is written from the document, so there are no case classes to keep in step with it.
+
+```scala mdoc:reset
+import cats.effect.IO
+import net.andimiller.torpor.client.{GraphQLClient, Operation, input}
+import net.andimiller.torpor.core.Scalar
+
+// Say which Scala type a leaf is read as, for one field or for every field of a type. Unbound, an `ID` is a `String`.
+final case class PetId(value: String)
+given io.circe.Decoder[PetId] = io.circe.Decoder.decodeString.map(PetId(_))
+given Scalar["Pet.id", PetId]()
+
+val pets = Operation.typed(
+  "modules/client/src/test/resources/petshop.graphqls",
+  """
+    query Pets($species: Species, $first: Int) {
+      pets(species: $species, first: $first) {
+        id
+        name
+        age
+        owner { name }
+      }
+    }
+  """
+)
+
+// Variables are given by name and checked against the ones the document declares. One that may be null can be left out.
+// The response is read by field: `name` is a `String`, `age` an `Option[Int]`, `id` a `PetId`.
+def names(client: GraphQLClient[IO]): IO[List[(PetId, String, Option[Int])]] =
+  client.run(pets(first = 2)).map(_.pets.map(pet => (pet.id, pet.name, pet.age)))
+```
+
+A field the document does not select is not a member of the response, and a variable that does not fit is refused:
+
+```scala mdoc:fail
+def species(data: pets.Data) = data.pets.map(_.species)
+```
+
+```scala mdoc:fail
+pets(first = "two")
+```
+
+An input object is written with `input(…)`, which is checked against the schema's input type where it is passed:
+`shelves(filter = input(genre = "FICTION", minItems = 3))`. A field the input type lacks, or a required one left out,
+does not compile.
+
 ## Why
 
 **The contract is data; the code is code.** The SDL is a text artefact: reviewable, diffable, sendable to a

@@ -3,7 +3,7 @@ package net.andimiller.torpor.client
 import cats.effect.Concurrent
 import cats.syntax.all.*
 import io.circe.{Decoder, Encoder, Json, JsonObject}
-import org.http4s.{Method, Request, Uri}
+import org.http4s.{Method, Uri}
 import org.http4s.circe.*
 import org.http4s.client.Client
 
@@ -36,21 +36,30 @@ final class GraphQLFailure(val errors: List[GraphQLError])
   */
 final class GraphQLClient[F[_]: Concurrent](client: Client[F], endpoint: Uri) {
 
+  /** Runs a typed operation that has been given its variables: `client.run(pets(first = Some(2)))`. */
+  def run[D](request: Request[D]): F[D] =
+    send(request.document, request.name, request.variables)(using request.decoder)
+
   /** Runs an operation that takes no variables. */
-  def run[D: Decoder](operation: Operation[Unit, D]): F[D] = send(operation, JsonObject.empty)
+  def run[D: Decoder](operation: Operation[Unit, D]): F[D] =
+    send(operation.document, operation.name, JsonObject.empty)
 
   def run[V: Encoder.AsObject, D: Decoder](operation: Operation[V, D], variables: V): F[D] =
     // a variable given no value is left out, which is what an `Option` that is `None` means
-    send(operation, Encoder.AsObject[V].encodeObject(variables).filter { case (_, value) => !value.isNull })
+    send(
+      operation.document,
+      operation.name,
+      Encoder.AsObject[V].encodeObject(variables).filter { case (_, value) => !value.isNull }
+    )
 
-  private def send[V, D: Decoder](operation: Operation[V, D], variables: JsonObject): F[D] = {
+  private def send[D: Decoder](document: String, name: Option[String], variables: JsonObject): F[D] = {
     val body = Json.obj(
-      "query"         -> Json.fromString(operation.document),
-      "operationName" -> operation.name.fold(Json.Null)(Json.fromString),
+      "query"         -> Json.fromString(document),
+      "operationName" -> name.fold(Json.Null)(Json.fromString),
       "variables"     -> Json.fromJsonObject(variables)
     )
 
-    client.expect[Json](Request[F](Method.POST, endpoint).withEntity(body)).flatMap { response =>
+    client.expect[Json](org.http4s.Request[F](Method.POST, endpoint).withEntity(body)).flatMap { response =>
       response.hcursor.get[Option[List[GraphQLError]]]("errors").map(_.toList.flatten) match {
         case Left(failure)                    => Concurrent[F].raiseError(failure)
         case Right(errors) if errors.nonEmpty => Concurrent[F].raiseError(new GraphQLFailure(errors))

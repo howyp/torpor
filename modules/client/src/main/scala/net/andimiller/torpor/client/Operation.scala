@@ -36,6 +36,17 @@ object Operation {
   inline def checked[V, D](inline schemaFile: String, inline document: String): Operation[V, D] =
     ${ OperationMacro.impl[V, D]('schemaFile, 'document) }
 
+  /** An operation whose response and variables the macro types from the schema, so no type is written for either:
+    * {{{
+    * val pets = Operation.typed("schema.graphqls", "query Pets($first: Int) { pets(first: $first) { name } }")
+    *
+    * client.run(pets(first = Some(2))).map(_.pets.map(_.name))
+    * }}}
+    * See [[TypedOperation]]. `schemaFile` is found as for [[checked]].
+    */
+  transparent inline def typed(inline schemaFile: String, inline document: String): TypedOperation[?, ?, ?] =
+    ${ TypedMacro.typed('schemaFile, 'document) }
+
   /** Called by code `checked` generates; not part of the API. */
   def unchecked[V, D](document: String, name: Option[String]): Operation[V, D] = new Operation(document, name)
 }
