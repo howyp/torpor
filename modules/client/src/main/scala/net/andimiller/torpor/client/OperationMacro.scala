@@ -4,6 +4,8 @@ import java.nio.file.{Files, Path, Paths}
 
 import net.andimiller.torpor.schema.{Schema, SdlFragment}
 
+import cats.syntax.all.*
+
 import scala.quoted.*
 
 object OperationMacro {
@@ -13,8 +15,33 @@ object OperationMacro {
   ): Expr[Operation[V, D]] = {
     import quotes.reflect.*
 
-    val file  = schemaFile.value.getOrElse(report.errorAndAbort("the schema file must be a literal string"))
-    val query = document.value.getOrElse(report.errorAndAbort("the operation must be a literal string"))
+    /** A string the compiler can read now: a literal, a constant such as an `inline val`, or literals and constants put
+      * together with `+`, with `s"…"`, or trimmed with `stripMargin`. That lets several operations share a selection.
+      */
+    def constant(expr: Expr[String]): Option[String] = expr match {
+      case Expr(value)                                                     => Some(value)
+      case '{ ($left: String) + ($right: String) }                         => (constant(left), constant(right)).mapN(_ + _)
+      case '{ scala.Predef.augmentString($text).stripMargin }              => constant(text).map(_.stripMargin)
+      case '{ StringContext(${ Varargs(parts) }*).s(${ Varargs(args) }*) } =>
+        val texts  = parts.toList.traverse(constant).map(_.map(StringContext.processEscapes))
+        val values = args.toList.traverse {
+          case '{ $arg: String } => constant(arg)
+          case _                 => None
+        }
+        (texts, values).mapN((texts, values) => texts.zipAll(values, "", "").map(_ + _).mkString)
+      case other                                                           =>
+        other.asTerm.tpe.widenTermRefByName.dealias match {
+          case ConstantType(StringConstant(value)) => Some(value)
+          case _                                   => None
+        }
+    }
+
+    val file  = constant(schemaFile).getOrElse(report.errorAndAbort("the schema file must be a constant string"))
+    val query = constant(document).getOrElse(
+      report.errorAndAbort(
+        "the operation must be a constant string: a literal, or literals and inline vals joined with s\"…\" or +"
+      )
+    )
 
     val calledFrom = Position.ofMacroExpansion.sourceFile.getJPath.map(_.toAbsolutePath)
     val schema     = read(file, calledFrom) match {

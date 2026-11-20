@@ -61,6 +61,35 @@ final class OperationSuite extends munit.FunSuite {
     assertEquals(pet.name, Some("P"))
   }
 
+  test("an operation may interpolate a selection that several operations share") {
+    inline val petFields = "id name age owner { name }"
+
+    val interpolated = operation[Unit, Pets](
+      s"""
+        query All {
+          pets { $petFields }
+        }
+      """
+    )
+    val joined       = operation[PetVariables, OnePetWithId]("query P($id: ID!) { pet(id: $id) { " + "id" + " } }")
+    val trimmed      = operation[Unit, Pets]("""{
+                                               |  pets { id name age owner { name } }
+                                               |}""".stripMargin)
+
+    assert(interpolated.document.contains("pets { id name age owner { name } }"), interpolated.document)
+    assertEquals(joined.name, Some("P"))
+    assert(trimmed.document.startsWith("{\n  pets"), trimmed.document)
+  }
+
+  test("an operation built from a value the compiler cannot read does not compile") {
+    val errors = compileErrors(
+      """val fields = List("id").mkString
+         Operation.checked[Unit, Pets]("modules/client/src/test/resources/petshop.graphqls", s"{ pets { $fields } }")"""
+    )
+
+    assert(errors.contains("the operation must be a constant string"), errors)
+  }
+
   test("a document that is not valid against the schema does not compile") {
     val errors = compileErrors(
       """Operation.checked[Unit, Pets]("modules/client/src/test/resources/petshop.graphqls", "{ pets { id nickname } }")"""

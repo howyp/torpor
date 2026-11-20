@@ -137,6 +137,7 @@ The calling side: `torpor-client` checks an operation when the code that states 
 | Feature | State |
 |---|---|
 | The document validated against an SDL file, with the same validator the server runs | yes |
+| A document built from literals and `inline val`s with `s"…"`, `+` or `stripMargin` | yes |
 | The schema file found from the working directory, or from any directory above the calling source | yes |
 | The response type checked: a case class per object, with exactly the selected response keys | yes |
 | Nullable fields, and fields a fragment or `@skip`/`@include` may leave out, required to be `Option` | yes |

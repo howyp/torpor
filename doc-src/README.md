@@ -128,6 +128,21 @@ def firstTwo(http: Client[IO]): IO[Pets] =
   new GraphQLClient[IO](http, uri"https://pets.example/graphql").run(pets, PetsVariables(species = None, first = Some(2)))
 ```
 
+An operation is any string the compiler can read: a literal, or literals and `inline val`s put together with `s"…"`.
+So operations can be laid out over several lines, and can share a selection:
+
+```scala mdoc
+inline val petFields = "id name age owner { name }"
+
+val everyPet = operation[Unit, Pets](
+  s"""
+    query EveryPet {
+      pets { $petFields }
+    }
+  """
+)
+```
+
 What does not compile, and what the compiler says:
 
 ```scala mdoc:fail

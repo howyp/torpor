@@ -121,12 +121,29 @@ inline def operation[V, D](inline document: String): Operation[V, D] =
 val pets = operation[PetsVariables, Pets](
   "query Pets($species: Species, $first: Int) { pets(species: $species, first: $first) { id name age owner { name } } }"
 )
-// pets: Operation[PetsVariables, Pets] = net.andimiller.torpor.client.Operation@16c9c9bc
+// pets: Operation[PetsVariables, Pets] = net.andimiller.torpor.client.Operation@94ebd49
 
 // 4. Run it. Headers, authentication and tracing belong to the http4s `Client`, as for any other service. A variable
 //    that is `None` is left out, and errors in the response are raised as a `GraphQLFailure`.
 def firstTwo(http: Client[IO]): IO[Pets] =
   new GraphQLClient[IO](http, uri"https://pets.example/graphql").run(pets, PetsVariables(species = None, first = Some(2)))
+```
+
+An operation is any string the compiler can read: a literal, or literals and `inline val`s put together with `s"…"`.
+So operations can be laid out over several lines, and can share a selection:
+
+```scala
+inline val petFields = "id name age owner { name }"
+// petFields: String = "id name age owner { name }"
+
+val everyPet = operation[Unit, Pets](
+  s"""
+    query EveryPet {
+      pets { $petFields }
+    }
+  """
+)
+// everyPet: Operation[Unit, Pets] = net.andimiller.torpor.client.Operation@72e6b369
 ```
 
 What does not compile, and what the compiler says:
@@ -181,7 +198,7 @@ val home = operation[HomeVariables, HomeOf](
        }
      }"""
 )
-// home: Operation[HomeVariables, HomeOf] = net.andimiller.torpor.client.Operation@71fb1d85
+// home: Operation[HomeVariables, HomeOf] = net.andimiller.torpor.client.Operation@5afc9c8a
 ```
 
 `name` is selected for every member of the union, so it is read as it is; `capacity` is a field of one member, so it is

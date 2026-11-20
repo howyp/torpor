@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "torpor-permutive-schema-metals": {
+      "url": "http://localhost:64579/mcp",
+      "type": "http"
+    }
+  }
+}
