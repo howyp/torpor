@@ -183,7 +183,57 @@ val home = operation[HomeVariables, HomeOf](
 ```
 
 `name` is selected for every member of the union, so it is read as it is; `capacity` is a field of one member, so it is
-an `Option`.
+an `Option`. A union or interface can also be read as a sealed trait, with one case class per type the value can be,
+named as the type is. Each is checked against the fields the operation selects for that type, so `capacity` is an `Int`
+on `Shelter`. The operation must select `__typename`, which is what the trait's decoder tells the members apart by:
+
+```scala mdoc
+object Homes {
+  sealed trait Home
+  final case class Owner(name: String) extends Home derives Decoder
+  final case class Shelter(name: String, capacity: Int) extends Home derives Decoder
+  object Home {
+    given Decoder[Home] = Decoder.instance { cursor =>
+      cursor.get[String]("__typename").flatMap {
+        case "Owner" => cursor.as[Owner]
+        case _       => cursor.as[Shelter]
+      }
+    }
+  }
+}
+final case class HomeId(id: String) derives Encoder.AsObject
+final case class HomeOfEither(home: Option[Homes.Home]) derives Decoder
+
+val homeOfEither = operation[HomeId, HomeOfEither](
+  "query Home($id: ID!) { home(pet: $id) { __typename ... on Owner { name } ... on Shelter { name capacity } } }"
+)
+```
+
+An enum is read as the union of its values as string literals, with the decoder `Literals.oneOf` for that union. A
+value class such as `Age(years: Int) extends AnyVal` is read as the value it wraps, and an opaque type as whatever its
+own decoder reads.
+
+```scala mdoc
+import net.andimiller.torpor.client.Literals
+
+type Species = "DOG" | "CAT"
+given Decoder[Species] = Literals.oneOf
+
+final case class PetSpecies(species: Species) derives Decoder
+final case class PetsSpecies(pets: List[PetSpecies]) derives Decoder
+
+val bySpecies = operation[Unit, PetsSpecies]("{ pets { species } }")
+```
+
+```scala mdoc:fail
+type NotASpecies = "BIRD" | "CAT"
+given Decoder[NotASpecies] = Literals.oneOf
+final case class PetBird(species: NotASpecies) derives Decoder
+final case class PetsBird(pets: List[PetBird]) derives Decoder
+
+// `BIRD` is not a value of the enum
+operation[Unit, PetsBird]("{ pets { species } }")
+```
 
 ### Letting the macro write the types
 
@@ -236,12 +286,73 @@ def species(data: pets.Data) = data.pets.map(_.species)
 pets(first = "two")
 ```
 
+An enum variable takes one of its values as a literal, and a variable given as `None` is left out where one given as
+`null` is sent as null, which a nullable input with a default tells apart:
+
+```scala mdoc
+val dogs      = pets(species = "DOG")
+val unlimited = pets(first = None)
+val nullFirst = pets(first = null)
+```
+
+```scala mdoc:fail
+pets(species = "BIRD")
+```
+
 An input object is written with `input(…)`, which is checked against the schema's input type where it is passed:
 `shelves(filter = input(genre = "FICTION", minItems = 3))`. A field the input type lacks, or a required one left out,
 does not compile.
 
-The file and the bindings are part of the `Api` value's type, so nothing else has to be in scope where an operation is
-stated: no import that a formatter might judge unused.
+A union or interface in a typed response has `__typename` as the names of the types it can be, and when the document
+selects `__typename` and fields for some of those types, a view per type: the record as that type when the server
+answered with it, with the type's own fields read without the `Option` the union needs.
+
+```scala mdoc
+val home = petshop.operation(
+  "query Home($id: ID!) { home(pet: $id) { __typename ... on Owner { name } ... on Shelter { name capacity } } }"
+)
+
+def capacity(client: GraphQLClient[IO], id: String): IO[Option[Long]] =
+  client.run(home(id = id)).map(_.home.flatMap(_.asShelter).map(_.capacity))
+```
+
+The schema and the bindings are part of the `Api` value's type, so nothing else has to be in scope where an operation
+is stated: no import that a formatter might judge unused.
+
+### Keeping operations in step with the schema
+
+The compiler does not know an operation depends on the schema file, so editing the file does not recompile the
+operations stated against it until something else does. `Api.sdl` and `Operation.checkedAgainst` take the schema as a
+constant instead, which the compiler tracks. The build writes the constant from the file:
+
+```scala
+// build.sbt: `Name.graphqls` in the resources becomes `object NameSchema { inline val sdl = "…" }`
+Compile / sourceGenerators += Def.task {
+  val into = (Compile / sourceManaged).value / "torpor"
+  ((Compile / resourceDirectory).value * "*.graphqls").get.map { file =>
+    val name    = file.base.capitalize + "Schema"
+    val target  = into / s"$name.scala"
+    val escaped = IO.read(file).flatMap {
+      case '\\' => "\\\\"
+      case '"'  => "\\\""
+      case '\n' => "\\n"
+      case '\r' => "\\r"
+      case '\t' => "\\t"
+      case c    => c.toString
+    }
+    val quote   = "\""
+    IO.write(target, s"package com.example\n\nobject $name { inline val sdl = $quote$escaped$quote }\n")
+    target
+  }
+}.taskValue
+```
+
+```scala
+val petshop = Api.sdl(PetshopSchema.sdl).read["Pet.id", PetId]
+val pets    = Operation.checkedAgainst[PetsVariables, Pets](PetshopSchema.sdl, "query Pets($first: Int) { pets(first: $first) { id } }")
+```
+
+A schema is parsed once per compiler, however many operations and calls read it.
 
 ## Why
 
@@ -286,7 +397,7 @@ Works today:
 | HTTP | `POST /graphql`, GraphQL errors as 200s; a `Request[F] => F[Unit]` setup hook for per-request context (`IOLocal`) |
 | Tools | introspection (`__schema`, `__type`) with unions, interfaces, inputs, scalars, defaults and deprecations, `Explain.mermaid` / `Explain.report` |
 | Relay | `torpor-relay`: `Connection[A]`, `PageInfo`, `PageArgs` and one slicing function for `first/after/last/before` |
-| Client | `torpor-client`: `Operation.checked[V, D](schemaFile, document)` compiles only if the document is valid against the SDL and `V` and `D` have the shape it gives them; `GraphQLClient` runs it over http4s |
+| Client | `torpor-client`: `Operation.checked[V, D](schemaFile, document)` compiles only if the document is valid against the SDL and `V` and `D` have the shape it gives them, with unions as sealed traits and enums as literal unions; `Api.at(file).operation(document)` writes the types from the document; `GraphQLClient` runs either over http4s |
 
 Not built yet — do not assume these work:
 
