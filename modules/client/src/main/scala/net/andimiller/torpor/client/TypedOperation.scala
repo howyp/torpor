@@ -11,7 +11,9 @@ final class Request[D](
     val name: Option[String],
     val variables: JsonObject,
     val decoder: Decoder[D]
-)
+) {
+  override def toString: String = s"Request(${name.getOrElse("anonymous")}, ${variables.toJson.noSpaces})"
+}
 
 /** An operation whose types the macro wrote from the schema: `api.operation(document)`, for an [[Api]].
   *
@@ -41,4 +43,6 @@ final class TypedOperation[Source <: Api.Source, Variables <: Tuple, D](
   /** `operation()`, for an operation that needs no variables. */
   inline def applyDynamic(inline method: String)(inline variables: Any*): Request[D] =
     ${ TypedMacro.requestWithout[Source, Variables, D]('this, 'variables) }
+
+  override def toString: String = s"TypedOperation(${name.getOrElse("anonymous")})"
 }

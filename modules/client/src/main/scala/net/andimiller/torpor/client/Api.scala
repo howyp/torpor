@@ -37,6 +37,8 @@ final class Api[Source <: Api.Source, Bindings <: Tuple] private (val decoders: 
     */
   transparent inline def operation(inline document: String): TypedOperation[?, ?, ?] =
     ${ TypedMacro.typed[Source, Bindings]('this, 'document) }
+
+  override def toString: String = decoders.keys.toList.sorted.mkString("Api(", ", ", ")")
 }
 
 object Api {

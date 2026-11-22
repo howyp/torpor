@@ -21,7 +21,9 @@ import scala.quoted.*
   * shape the document gives them: see [[Check]] for the rules. The types are ordinary case classes with whatever codecs
   * they like; nothing is generated.
   */
-final class Operation[V, D] private[client] (val document: String, val name: Option[String])
+final class Operation[V, D] private[client] (val document: String, val name: Option[String]) {
+  override def toString: String = s"Operation(${name.getOrElse("anonymous")})"
+}
 
 object Operation {
 
