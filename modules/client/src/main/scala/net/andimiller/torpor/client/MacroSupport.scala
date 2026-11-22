@@ -105,6 +105,8 @@ private[client] object MacroSupport {
       val dealiased = tpe.dealias
       val symbol    = dealiased.typeSymbol
       dealiased match {
+        case _ if dealiased =:= TypeRepr.of[Null]                                                     =>
+          Shape.Null
         // the element type of `Nil`, and what `None` holds: a value of it fits anywhere
         case _ if dealiased =:= TypeRepr.of[Nothing]                                                  =>
           Shape.Trusted("Nothing")

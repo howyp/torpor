@@ -14,17 +14,18 @@ object InputObject {
 
   given [I <: InputObject[Tuple]]: Encoder[I] = Encoder.instance(input => Json.fromJsonObject(input.json))
 
-  /** Called by code the macro generates; not part of the API. A field given as `None` is left out. */
-  def of[Fields <: Tuple](fields: List[(String, Json)]): InputObject[Fields] =
-    new InputObject(JsonObject.fromIterable(fields.filterNot(_._2.isNull)))
+  /** Called by code the macro generates; not part of the API. A field given as `None` has no value, and is left out. */
+  def of[Fields <: Tuple](fields: List[(String, Option[Json])]): InputObject[Fields] =
+    new InputObject(JsonObject.fromIterable(fields.collect { case (name, Some(json)) => name -> json }))
 }
 
 /** Writes an input object from named fields, each encoded with the `Encoder` in scope for its type:
   * {{{
-  * input(species = "DOG", first = Some(10))
+  * input(species = "DOG", first = Some(10), nickname = null)
   * }}}
-  * Nothing is checked here. Passing the result to a typed operation checks its fields against the input type the
-  * operation's variable declares.
+  * A field that is `None` is left out, and one that is `null` is sent as null, which is not the same thing when the
+  * field has a default. Nothing is checked here. Passing the result to a typed operation checks its fields against the
+  * input type the operation's variable declares.
   */
 object input extends Dynamic {
 

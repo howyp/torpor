@@ -37,6 +37,23 @@ final class TypedOperationSuite extends munit.FunSuite {
     assertEquals(nil.variables.toMap, Map("names" -> Json.arr()))
   }
 
+  test("null is sent as null, where None is left out") {
+    val variable = shelves(names = List("fiction"), first = null)
+    val field    = shelves(names = List("fiction"), filter = input(genre = "FICTION", minItems = null))
+
+    assertEquals(variable.variables.toMap.get("first"), Some(Json.Null))
+    assertEquals(
+      field.variables.toMap.get("filter"),
+      Some(Json.obj("genre" -> Json.fromString("FICTION"), "minItems" -> Json.Null))
+    )
+  }
+
+  test("null for a variable that must be given a value does not compile") {
+    val errors = compileErrors("""shelves(names = null)""")
+
+    assert(errors.contains("$names must be given a value, so it cannot be null"), errors)
+  }
+
   test("one response key with two types across fragments does not compile") {
     val errors = compileErrors(
       """Api.at("modules/client/src/test/resources/petshop.graphqls").operation("{ home(pet: \"1\") { ... on Owner { x: name } ... on Shelter { x: capacity } } }")"""

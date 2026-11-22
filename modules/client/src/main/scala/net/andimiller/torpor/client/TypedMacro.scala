@@ -152,7 +152,7 @@ object TypedMacro {
 
   private def requestOf[File <: String: Type, Variables <: Tuple: Type, D: Type](using q: Quotes)(
       operation: Expr[TypedOperation[File, Variables, D]],
-      values: List[(String, q.reflect.TypeRepr, Expr[Json])]
+      values: List[(String, q.reflect.TypeRepr, Expr[Option[Json]])]
   ): Expr[Request[D]] = {
     import q.reflect.*
 
@@ -174,8 +174,8 @@ object TypedMacro {
       new Request[D](
         $operation.document,
         $operation.name,
-        // a variable given as `None` is left out, which is what leaving it out of the call means
-        JsonObject.fromIterable($fields.filterNot(_._2.isNull)),
+        // a variable given as `None` has no value, which is what leaving it out of the call means
+        JsonObject.fromIterable($fields.collect { case (name, Some(json)) => name -> json }),
         $operation.decoder
       )
     }
@@ -213,10 +213,10 @@ object TypedMacro {
     }
   }
 
-  /** Named arguments as `(name, the value's own type, the value encoded)`. */
+  /** Named arguments as `(name, the value's own type, the value encoded)`, where a `None` encodes to nothing. */
   private def named(using
       q: Quotes
-  )(supplied: Expr[Seq[(String, Any)]]): List[(String, q.reflect.TypeRepr, Expr[Json])] = {
+  )(supplied: Expr[Seq[(String, Any)]]): List[(String, q.reflect.TypeRepr, Expr[Option[Json]])] = {
     import q.reflect.*
 
     val pairs = supplied match {
@@ -234,20 +234,32 @@ object TypedMacro {
     }
   }
 
-  /** The value as JSON, with the `Encoder` in scope for its type. `Nil` and `None` have no element to encode, so they
-    * are written as what they are: an empty list and nothing.
+  /** The value as JSON, with the `Encoder` in scope for its type, or nothing for an `Option` that is `None`. `null` is
+    * sent as null, which is not the same as nothing when the position has a default. `Nil` has no element to encode, so
+    * it is written as the empty list it is.
     */
-  private def encoded(using q: Quotes)(key: String, tpe: q.reflect.TypeRepr, value: Expr[Any]): Expr[Json] = {
+  private def encoded(using q: Quotes)(key: String, tpe: q.reflect.TypeRepr, value: Expr[Any]): Expr[Option[Json]] = {
     import q.reflect.*
-    if (tpe <:< TypeRepr.of[Iterable[Nothing]]) '{ Json.arr() }
-    else if (tpe <:< TypeRepr.of[Option[Nothing]]) '{ Json.Null }
+
+    def encoder[T: Type]: Expr[Encoder[T]] =
+      Expr.summon[Encoder[T]].getOrElse {
+        report.errorAndAbort(s"'$key' is a ${TypeRepr.of[T].show}, which has no Encoder in scope")
+      }
+
+    if (tpe =:= TypeRepr.of[Null]) '{ Some(Json.Null) }
+    else if (tpe <:< TypeRepr.of[Option[Nothing]]) '{ None }
+    else if (tpe <:< TypeRepr.of[Iterable[Nothing]]) '{ Some(Json.arr()) }
+    else if (tpe <:< TypeRepr.of[Option[Any]])
+      tpe.baseType(TypeRepr.of[Option[Any]].typeSymbol) match {
+        case AppliedType(_, List(element)) =>
+          element.asType match {
+            case '[t] => '{ ${ value.asExprOf[Option[t]] }.map(held => ${ encoder[t] }(held)) }
+          }
+        case _                             => report.errorAndAbort(s"'$key' is a ${tpe.show}, which is not an Option of anything")
+      }
     else
       tpe.asType match {
-        case '[t] =>
-          Expr.summon[Encoder[t]] match {
-            case Some(encoder) => '{ $encoder(${ value.asExprOf[t] }) }
-            case None          => report.errorAndAbort(s"'$key' is a ${tpe.show}, which has no Encoder in scope")
-          }
+        case '[t] => '{ Some(${ encoder[t] }(${ value.asExprOf[t] })) }
       }
   }
 

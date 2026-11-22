@@ -149,7 +149,7 @@ The calling side: `torpor-client` checks an operation when the code that states 
 | Input object variables checked field by field | yes, for a case class; a type that is not a case class is taken on trust and its encoder decides |
 | `Api.at(file).operation(document)`: the response type written from the document, as a record with a member per selected field | yes |
 | Leaves read as the type the `Api` binds with `read`, for a field (`"Pet.id"`) or for its type (`"ID"`) | yes |
-| Variables given by name and checked against the declared ones, with optional ones left out; `None` and `Nil` as values | yes |
+| Variables given by name and checked against the declared ones, with optional ones left out; `None` and `Nil` as values; `null` sent as null | yes |
 | Input objects written with `input(…)` and checked against the schema's input type | yes; a list of differently-shaped inputs is taken on trust |
 | A type of the caller's own standing for a whole input object, encoded by its own `Encoder` | yes |
 | Enum values as a literal union in the response | no: an unbound enum is a `String` |

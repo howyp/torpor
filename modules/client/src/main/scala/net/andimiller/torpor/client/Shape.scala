@@ -24,7 +24,11 @@ enum Shape {
     */
   case Trusted(name: String)
 
+  /** The literal `null`: a value sent as null, as opposed to a `None`, which is left out. */
+  case Null
+
   def render: String = this match {
+    case Null            => "null"
     case Optional(of)    => s"Option[${of.render}]"
     case Many(of)        => s"List[${of.render}]"
     case Record(name, _) => name
