@@ -144,7 +144,7 @@ The calling side: `torpor-client` checks an operation when the code that states 
 | A field selected for every member of a union or interface read without `Option` | yes; a field beneath an object that only one member's fragment selects is an `Option` too |
 | One response key selected with different types in different fragments | rejected: the validator leaves cross-fragment merging out, so the client checks it |
 | Lists required to be collections; `String`, `Boolean`, `Int`, `Float` checked against the Scala type | yes |
-| Enums | read as a union of their values as literals (`"DOG" \| "CAT"`, decoded with `Literals.given`), or as `String`; a literal is checked against the values, where written and where read |
+| Enums | read as a union of their values as literals (`"DOG" \| "CAT"`, decoded with `Literals.oneOf`), or as `String`; a literal is checked against the values, where written and where read |
 | Ids and custom scalars | not checked: read as any type that is not a case class or a collection, whose decoder decides |
 | The variables type checked: one field per declared variable, no `Option` for one that must be given a value, each field against the variable's type | yes |
 | Input object variables checked field by field | yes, for a case class; a type that is not a case class is taken on trust and its encoder decides |

@@ -6,15 +6,18 @@ import scala.quoted.*
 
 /** Codecs for a union of string literals, such as `"DOG" | "CAT"`, which is what an enum is read as:
   * {{{
-  * import net.andimiller.torpor.client.Literals.given
+  * type Species = "DOG" | "CAT"
+  * given Decoder[Species] = Literals.oneOf
   *
-  * final case class Pet(species: "DOG" | "CAT") derives Decoder
+  * final case class Pet(species: Species) derives Decoder
   * }}}
+  * The decoder is bound by name rather than found for any union, because a given in scope for every `A <: String` would
+  * also be chosen for `String` itself, over circe's own.
   */
 object Literals {
 
   /** Reads one of the literals, and nothing else. */
-  inline given oneOf[A <: String]: Decoder[A] = ${ decoder[A] }
+  inline def oneOf[A <: String]: Decoder[A] = ${ decoder[A] }
 
   private def decoder[A <: String: Type](using Quotes): Expr[Decoder[A]] = {
     import quotes.reflect.*
