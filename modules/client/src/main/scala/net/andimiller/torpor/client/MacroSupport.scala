@@ -148,6 +148,9 @@ private[client] object MacroSupport {
             case AppliedType(_, List(of1)) => Shape.Many(of(of1, within))
             case _                         => Shape.Leaf(symbol.name)
           }
+        // a sealed trait reads a union or interface: one case class per member
+        case _ if symbol.isClassDef && symbol.flags.is(Flags.Sealed) && !symbol.flags.is(Flags.Case)  =>
+          Shape.Sealed(symbol.name, symbol.children.map(child => of(child.typeRef, within + symbol.fullName)))
         // a recursive case class is checked once: beneath itself it is taken on trust
         case _ if symbol.isClassDef && symbol.flags.is(Flags.Case) && !within(symbol.fullName)        =>
           Shape.Record(

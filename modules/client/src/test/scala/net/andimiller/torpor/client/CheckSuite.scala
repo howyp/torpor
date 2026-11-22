@@ -167,6 +167,42 @@ final class CheckSuite extends munit.FunSuite {
     assertEquals(problems(document, noVariables, data), Nil)
   }
 
+  test("a sealed trait reads an interface as one case class per implementer, each against its own fragment") {
+    def items(members: List[Shape]): Shape =
+      shelves(Record("Shelf", List("items" -> Many(Sealed("Item", members)))))
+    val book                               = Record("Book", List("title" -> Leaf("String"), "pages" -> Leaf("Int")))
+    val film                               = Record("Film", List("title" -> Leaf("String"), "minutes" -> Leaf("Int")))
+    val document                           = "{ shelves { items { __typename title ... on Book { pages } ... on Film { minutes } } } }"
+
+    assertEquals(problems(document, noVariables, items(List(book, film))), Nil)
+    assertEquals(
+      problems(document, noVariables, items(List(book))),
+      List("Item has no member for Film, which query.shelves[].items[] can be")
+    )
+    assertEquals(
+      problems(document, noVariables, items(List(book, film, Record("Song", Nil)))),
+      List("Item has a member Song, which is not a type that query.shelves[].items[] can be: Book, Film")
+    )
+    assertEquals(
+      problems(
+        "{ shelves { items { title ... on Book { pages } ... on Film { minutes } } } }",
+        noVariables,
+        items(List(book, film))
+      ),
+      List(
+        "query.shelves[].items[] is read as Item, a sealed trait, so the operation must select __typename at query.shelves[].items[]"
+      )
+    )
+    assertEquals(
+      problems(
+        "{ shelves { items { __typename title ... on Book { pages minutes: pages } ... on Film { minutes } } } }",
+        noVariables,
+        items(List(book, film))
+      ),
+      List("query.shelves[].items[] as Book.minutes is selected, but Book never reads it")
+    )
+  }
+
   test("a named fragment is checked like an inline one") {
     val data     = shelves(Record("Shelf", List("items" -> Many(Record("Item", List("minutes" -> Leaf("Int")))))))
     val document = "query Q { shelves { items { ...Length } } } fragment Length on Film { minutes }"

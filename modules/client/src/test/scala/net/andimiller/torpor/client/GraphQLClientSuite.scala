@@ -101,6 +101,17 @@ final class GraphQLClientSuite extends munit.CatsEffectSuite {
     } yield assertEquals(result, HomeOf(Some(Home(__typename = "Shelter", name = "Paws", capacity = Some(40)))))
   }
 
+  test("a union read as a sealed trait decodes as the member the server answered with") {
+    val home = operation[PetVariables, HomeOfSealed](
+      "query Home($id: ID!) { home(pet: $id) { __typename ... on Owner { name } ... on Shelter { name capacity } } }"
+    )
+
+    for {
+      graphql <- client
+      result  <- graphql.run(home, PetVariables(id = "1"))
+    } yield assertEquals(result, HomeOfSealed(Some(Homes.Shelter("Paws", 40))))
+  }
+
   test("errors in the response are raised with their messages and paths") {
     val onePet = operation[PetVariables, OnePet]("query P($id: ID!) { pet(id: $id) { name } }")
 

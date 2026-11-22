@@ -16,6 +16,9 @@ enum Shape {
   /** A case class, by its fields in order. */
   case Record(name: String, fields: List[(String, Shape)])
 
+  /** A sealed trait, by its case classes: how a union or interface is read, one member per type the value can be. */
+  case Sealed(name: String, members: List[Shape])
+
   /** Anything else: a primitive, or a type whose own codec decides what it reads, such as an id or an enum. */
   case Leaf(name: String)
 
@@ -38,6 +41,7 @@ enum Shape {
     case Optional(of)     => s"Option[${of.render}]"
     case Many(of)         => s"List[${of.render}]"
     case Record(name, _)  => name
+    case Sealed(name, _)  => name
     case Leaf(name)       => name
     case Trusted(name)    => name
   }

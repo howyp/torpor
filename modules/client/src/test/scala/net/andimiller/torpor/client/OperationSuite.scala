@@ -1,7 +1,6 @@
 package net.andimiller.torpor.client
 
 import io.circe.{Decoder, Encoder}
-import net.andimiller.torpor.client.Literals.given
 
 final case class PetsVariables(species: Option[String], first: Option[Int]) derives Encoder.AsObject
 final case class Pets(pets: List[Pet]) derives Decoder
@@ -24,9 +23,13 @@ object Names {
   given Decoder[Name]           = Decoder.decodeString
 }
 final case class PetAgeAndName(name: Names.Name, age: Option[Age]) derives Decoder
-final case class PetSpecies(species: "DOG" | "CAT") derives Decoder
+type Species = "DOG" | "CAT"
+given Decoder[Species] = Literals.oneOf
+final case class PetSpecies(species: Species) derives Decoder
 final case class PetsSpecies(pets: List[PetSpecies]) derives Decoder
-final case class PetBird(species: "BIRD" | "CAT") derives Decoder
+type Bird    = "BIRD" | "CAT"
+given Decoder[Bird] = Literals.oneOf
+final case class PetBird(species: Bird) derives Decoder
 final case class PetsBird(pets: List[PetBird]) derives Decoder
 final case class PetsAgeAndName(pets: List[PetAgeAndName]) derives Decoder
 final case class OnePetWithId(pet: Option[PetWithId]) derives Decoder
@@ -42,6 +45,30 @@ final case class PetAge(age: Int) derives Decoder
 final case class OnePetAge(pet: Option[PetAge]) derives Decoder
 
 final case class HomeOf(home: Option[Home]) derives Decoder
+
+object Homes     {
+  sealed trait Home
+  final case class Owner(name: String)                  extends Home derives Decoder
+  final case class Shelter(name: String, capacity: Int) extends Home derives Decoder
+  object Home {
+    given Decoder[Home] = Decoder.instance { cursor =>
+      cursor.get[String]("__typename").flatMap {
+        case "Owner"   => cursor.as[Owner]
+        case "Shelter" => cursor.as[Shelter]
+        case other     => Left(io.circe.DecodingFailure(s"not a Home: $other", cursor.history))
+      }
+    }
+  }
+}
+final case class HomeOfSealed(home: Option[Homes.Home]) derives Decoder
+object OwnerOnly {
+  sealed trait Home
+  final case class Owner(name: String) extends Home derives Decoder
+  object Home {
+    given Decoder[Home] = Decoder[Owner].map(identity)
+  }
+}
+final case class HomeOfOwnerOnly(home: Option[OwnerOnly.Home]) derives Decoder
 final case class Home(__typename: String, name: String, capacity: Option[Int]) derives Decoder
 final case class HomeCapacity(capacity: Int) derives Decoder
 final case class HomeOfCapacity(home: Option[HomeCapacity]) derives Decoder
@@ -73,6 +100,33 @@ final class OperationSuite extends munit.FunSuite {
     )
 
     assertEquals(home.name, Some("Home"))
+  }
+
+  test("a union is read as a sealed trait with a case class per member, each against its own fragment") {
+    val home = operation[PetVariables, HomeOfSealed](
+      "query Home($id: ID!) { home(pet: $id) { __typename ... on Owner { name } ... on Shelter { name capacity } } }"
+    )
+
+    assertEquals(home.name, Some("Home"))
+  }
+
+  test("a sealed trait needs __typename selected, a member per type, and each member's fields selected for it") {
+    val untagged = compileErrors(
+      """Operation.checked[PetVariables, HomeOfSealed]("modules/client/src/test/resources/petshop.graphqls", "query H($id: ID!) { home(pet: $id) { ... on Owner { name } ... on Shelter { name capacity } } }")"""
+    )
+    val unread   = compileErrors(
+      """Operation.checked[PetVariables, HomeOfSealed]("modules/client/src/test/resources/petshop.graphqls", "query H($id: ID!) { home(pet: $id) { __typename ... on Owner { name } ... on Shelter { name } } }")"""
+    )
+    val missing  = compileErrors(
+      """Operation.checked[PetVariables, HomeOfOwnerOnly]("modules/client/src/test/resources/petshop.graphqls", "query H($id: ID!) { home(pet: $id) { __typename ... on Owner { name } } }")"""
+    )
+
+    assert(untagged.contains("so the operation must select __typename at query.home"), untagged)
+    assert(
+      unread.contains("Shelter reads 'capacity', which the operation does not select at query.home as Shelter"),
+      unread
+    )
+    assert(missing.contains("Home has no member for Shelter, which query.home can be"), missing)
   }
 
   test("a value class is read by its own decoder, like any other scalar") {

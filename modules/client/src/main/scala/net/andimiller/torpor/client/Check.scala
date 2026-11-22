@@ -19,6 +19,9 @@ import net.andimiller.torpor.schema.{
   * The rules, for the type the response is read as:
   *   - an object is a case class whose fields are exactly the response keys the document selects, so a field that is
   *     read but not selected, or selected but never read, is an error;
+  *   - a union or interface may instead be a sealed trait with one case class per type the value can be, named as the
+  *     type is, each read against the fields selected for that type; the document must select `__typename` there, which
+  *     is what the trait's decoder tells the members apart by;
   *   - a nullable field is an `Option`; so is a field selected inside a fragment that only some types match, or behind
   *     `@skip` or `@include`, because the response may not carry it;
   *   - a list is a collection;
@@ -282,10 +285,47 @@ final private[client] class Check(schema: Schema, document: ExecutableDocument) 
       })
   }
 
-  /** A case class against the fields selected on an object. */
+  /** The view of a union or interface value as one of the types it can be: the selections that apply in the worlds
+    * where it is that type.
+    */
+  def view(selections: Selections, member: String): Selections =
+    Selections(
+      member,
+      selections.entries.map(entry => entry.copy(worlds = entry.worlds.filter(_.last == member))),
+      selections.worlds.filter(_.last == member)
+    )
+
+  /** The object types a value of the named type can be, in a stable order. */
+  def possibleTypes(name: String): List[String] = possible(name).toList.sorted
+
+  /** A case class against the fields selected on an object, or a sealed trait against each type the object can be. */
   private def record(selections: Selections, shape: Shape, path: String): List[String] =
     shape match {
-      case Shape.Record(name, read) =>
+      case Shape.Sealed(name, members) =>
+        fields(selections, path) match {
+          case Left(conflicts) => conflicts
+          case Right(selected) =>
+            val universe = possibleTypes(selections.parent)
+            val names    = members.map(_.render)
+            val tagged   =
+              if (selected.exists(field => field.name == "__typename" && !field.conditional)) Nil
+              else List(s"$path is read as $name, a sealed trait, so the operation must select __typename at $path")
+            val unknown  = names.filterNot(universe.contains).map { member =>
+              s"$name has a member $member, which is not a type that $path can be: ${universe.mkString(", ")}"
+            }
+            val missing  = universe.filterNot(names.contains).map { member =>
+              s"$name has no member for $member, which $path can be"
+            }
+            val each     = members.flatMap {
+              case member @ Shape.Record(memberName, _) if universe.contains(memberName) =>
+                record(view(selections, memberName), member, s"$path as $memberName")
+              case member if universe.contains(member.render)                            =>
+                List(s"$name has a member ${member.render}, which is not a case class")
+              case _                                                                     => Nil
+            }
+            tagged ++ unknown ++ missing ++ each
+        }
+      case Shape.Record(name, read)    =>
         fields(selections, path) match {
           case Left(conflicts) => conflicts
           case Right(selected) =>
@@ -300,15 +340,15 @@ final private[client] class Check(schema: Schema, document: ExecutableDocument) 
             }
             unread ++ fit
         }
-      case other                    =>
+      case other                       =>
         List(
           s"$path is the object type ${selections.parent} in the schema, so it is read as a case class, not ${other.render}"
         )
     }
 
-  /** The response keys selected, with fragments expanded. */
+  /** The response keys selected, with fragments expanded. A selection that applies in no world selects nothing. */
   private def collect(entries: List[Entry], skippable: Boolean): List[(String, Selected)] =
-    entries.flatMap { case Entry(written, selection, worlds) =>
+    entries.filter(_.worlds.nonEmpty).flatMap { case Entry(written, selection, worlds) =>
       val maybe =
         skippable || selection.directives.exists(directive => directive.name == "skip" || directive.name == "include")
       selection match {
