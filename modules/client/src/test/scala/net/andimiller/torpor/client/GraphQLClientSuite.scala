@@ -5,7 +5,9 @@ import io.circe.Json
 import net.andimiller.torpor.http.TorporHttp
 import net.andimiller.torpor.macros.schema
 import net.andimiller.torpor.source.*
-import org.http4s.client.Client
+import org.http4s.{HttpApp, Response, Status}
+import org.http4s.circe.*
+import org.http4s.client.{Client, UnexpectedStatus}
 import org.http4s.implicits.*
 
 /** Checked operations run against a real torpor server, in process. */
@@ -108,6 +110,33 @@ final class GraphQLClientSuite extends munit.CatsEffectSuite {
     } yield failure match {
       case Left(raised: GraphQLFailure) => assertEquals(raised.errors.map(_.path), List(List("pet")))
       case other                        => fail(s"expected a GraphQLFailure, got $other")
+    }
+  }
+
+  test("errors in a response that is not a 200 are raised all the same") {
+    val onePet  = operation[PetVariables, OnePet]("query P($id: ID!) { pet(id: $id) { name } }")
+    val refused = Json.obj("errors" -> Json.arr(Json.obj("message" -> Json.fromString("no such operation"))))
+    val graphql = new GraphQLClient[IO](
+      Client.fromHttpApp(HttpApp.pure[IO](Response[IO](Status.BadRequest).withEntity(refused))),
+      uri"/graphql"
+    )
+
+    graphql.run(onePet, PetVariables(id = "1")).attempt.map {
+      case Left(raised: GraphQLFailure) => assertEquals(raised.errors.map(_.message), List("no such operation"))
+      case other                        => fail(s"expected a GraphQLFailure, got $other")
+    }
+  }
+
+  test("a failure that is not a GraphQL response is raised with its status") {
+    val onePet  = operation[PetVariables, OnePet]("query P($id: ID!) { pet(id: $id) { name } }")
+    val graphql = new GraphQLClient[IO](
+      Client.fromHttpApp(HttpApp.pure[IO](Response[IO](Status.ServiceUnavailable).withEntity("<html>down</html>"))),
+      uri"/graphql"
+    )
+
+    graphql.run(onePet, PetVariables(id = "1")).attempt.map {
+      case Left(raised: UnexpectedStatus) => assertEquals(raised.status, Status.ServiceUnavailable)
+      case other                          => fail(s"expected an UnexpectedStatus, got $other")
     }
   }
 
