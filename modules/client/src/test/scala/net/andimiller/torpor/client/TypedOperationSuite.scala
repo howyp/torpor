@@ -19,6 +19,15 @@ final class TypedOperationSuite extends munit.FunSuite {
     """
   )
 
+  test("an Api may take the schema as a constant the build wrote from the file") {
+    val generated = Api.sdl(LibrarySchema.sdl).operation("{ shelves(names: []) { name } }")
+    val literal   = Api.sdl("type Query { answer: Int! }").operation("{ answer }")
+
+    assertEquals(generated.document, "{ shelves(names: []) { name } }")
+    val answer: Int = Option.empty[literal.Data].map(_.answer).getOrElse(0)
+    assertEquals(answer, 0)
+  }
+
   test("an operation keeps its document and name") {
     assertEquals(shelves.name, Some("Shelves"))
     assert(shelves.document.contains("query Shelves"))

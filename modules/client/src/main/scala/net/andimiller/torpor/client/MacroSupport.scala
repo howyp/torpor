@@ -1,6 +1,7 @@
 package net.andimiller.torpor.client
 
 import java.nio.file.{Files, Path, Paths}
+import java.util.concurrent.ConcurrentHashMap
 
 import cats.syntax.all.*
 import net.andimiller.torpor.schema.{Schema, SdlFragment}
@@ -42,22 +43,54 @@ private[client] object MacroSupport {
       )
     )
 
+  /** The schema an `Api` value's type names: the file, or the SDL itself. */
+  def schema[Source <: Api.Source: Type](using Quotes): Schema = {
+    import quotes.reflect.*
+    TypeRepr.of[Source].dealias match {
+      case AppliedType(source, List(ConstantType(StringConstant(value)))) if source =:= TypeRepr.of[Api.File] =>
+        schemaInFile(value)
+      case AppliedType(source, List(ConstantType(StringConstant(value)))) if source =:= TypeRepr.of[Api.Sdl]  =>
+        schemaInSdl(value)
+      case other                                                                                              =>
+        report.errorAndAbort(s"expected the schema's source as a type, found ${other.show}")
+    }
+  }
+
   /** The schema in the named SDL file, or a compile error. */
-  def schema(file: String)(using Quotes): Schema = {
+  def schemaInFile(file: String)(using Quotes): Schema = {
     import quotes.reflect.*
     val calledFrom = Position.ofMacroExpansion.sourceFile.getJPath.map(_.toAbsolutePath)
     read(file, calledFrom) match {
       case Left(problem) => report.errorAndAbort(problem)
-      case Right(sdl)    =>
-        Schema.merge(List(SdlFragment(file, sdl))) match {
-          case Left(errors)  => report.errorAndAbort(errors.toChain.toList.map(_.render).mkString("\n"))
-          case Right(merged) => merged
-        }
+      case Right(sdl)    => parsed(file, sdl)
+    }
+  }
+
+  /** The schema in the SDL, or a compile error. */
+  def schemaInSdl(sdl: String)(using Quotes): Schema = parsed("schema", sdl)
+
+  // every operation and every call of one reads the schema, so each text is parsed once per compiler
+  private val schemas = new ConcurrentHashMap[String, Schema]
+
+  private def parsed(label: String, sdl: String)(using Quotes): Schema = {
+    import quotes.reflect.*
+    Option(schemas.get(sdl)).getOrElse {
+      Schema.merge(List(SdlFragment(label, sdl))) match {
+        case Left(errors)  => report.errorAndAbort(errors.toChain.toList.map(_.render).mkString("\n"))
+        case Right(merged) =>
+          schemas.put(sdl, merged)
+          merged
+      }
     }
   }
 
   def schemaFile(expr: Expr[String])(using Quotes): String =
     constant(expr).getOrElse(quotes.reflect.report.errorAndAbort("the schema file must be a constant string"))
+
+  def schemaText(expr: Expr[String])(using Quotes): String =
+    constant(expr).getOrElse(
+      quotes.reflect.report.errorAndAbort("the schema must be a constant string: a literal, or an inline val")
+    )
 
   /** The schema's text. A relative path is tried from the working directory, which under sbt is the build's root, and
     * then from each directory above the calling source file, which is where an editor's compiler finds it.

@@ -34,7 +34,14 @@ object Operation {
     * }}}
     */
   inline def checked[V, D](inline schemaFile: String, inline document: String): Operation[V, D] =
-    ${ OperationMacro.impl[V, D]('schemaFile, 'document) }
+    ${ OperationMacro.fromFile[V, D]('schemaFile, 'document) }
+
+  /** As [[checked]], with the schema as SDL rather than as a file: a literal, or an `inline val` such as one the build
+    * generates from the schema file. The compiler tracks a Scala source, so every operation checked against the schema
+    * recompiles when it changes, which editing a file does not bring about.
+    */
+  inline def checkedAgainst[V, D](inline sdl: String, inline document: String): Operation[V, D] =
+    ${ OperationMacro.fromSdl[V, D]('sdl, 'document) }
 
   /** Called by code `checked` generates; not part of the API. */
   def unchecked[V, D](document: String, name: Option[String]): Operation[V, D] = new Operation(document, name)

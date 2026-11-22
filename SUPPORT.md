@@ -139,6 +139,8 @@ The calling side: `torpor-client` checks an operation when the code that states 
 | The document validated against an SDL file, with the same validator the server runs | yes |
 | A document built from literals and `inline val`s with `s"…"`, `+` or `stripMargin` | yes |
 | The schema file found from the working directory, or from any directory above the calling source | yes |
+| The schema as a constant instead, `Api.sdl(…)` and `Operation.checkedAgainst(…)`, such as an `inline val` the build writes from the file, so that editing the file recompiles the operations | yes |
+| The schema parsed once per compiler, however many operations and calls read it | yes |
 | The response type checked: a case class per object, with exactly the selected response keys | yes |
 | Nullable fields, and fields a fragment or `@skip`/`@include` may leave out, required to be `Option` | yes |
 | A field selected for every member of a union or interface read without `Option` | yes; a field beneath an object that only one member's fragment selects is an `Option` too |

@@ -16,7 +16,7 @@ final class Request[D](
 /** An operation whose types the macro wrote from the schema: `api.operation(document)`, for an [[Api]].
   *
   * `D` is the response: a [[Record]] with a member for each field the document selects. `Variables` lists the variables
-  * the document declares, and `File` names the schema, which is what lets a call be checked:
+  * the document declares, and `Source` names the schema, which is what lets a call be checked:
   * {{{
   * val pets = petshop.operation("query Pets($first: Int) { pets(first: $first) { name } }")
   *
@@ -26,7 +26,7 @@ final class Request[D](
   * type. A variable that must be given a value cannot be left out. One given as `None` is left out, and one given as
   * `null` is sent as null, which a nullable input with a default tells apart.
   */
-final class TypedOperation[File <: String, Variables <: Tuple, D](
+final class TypedOperation[Source <: Api.Source, Variables <: Tuple, D](
     val document: String,
     val name: Option[String],
     val decoder: Decoder[D]
@@ -36,9 +36,9 @@ final class TypedOperation[File <: String, Variables <: Tuple, D](
   type Data = D
 
   inline def applyDynamicNamed(inline method: String)(inline variables: (String, Any)*): Request[D] =
-    ${ TypedMacro.request[File, Variables, D]('this, 'variables) }
+    ${ TypedMacro.request[Source, Variables, D]('this, 'variables) }
 
   /** `operation()`, for an operation that needs no variables. */
   inline def applyDynamic(inline method: String)(inline variables: Any*): Request[D] =
-    ${ TypedMacro.requestWithout[File, Variables, D]('this, 'variables) }
+    ${ TypedMacro.requestWithout[Source, Variables, D]('this, 'variables) }
 }

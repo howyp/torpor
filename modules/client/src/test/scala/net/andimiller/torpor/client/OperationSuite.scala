@@ -88,6 +88,12 @@ final class OperationSuite extends munit.FunSuite {
     assert(pets.document.startsWith("query Pets"))
   }
 
+  test("an operation may be checked against the schema as a constant the build wrote from the file") {
+    val pets = Operation.checkedAgainst[Unit, Pets](PetshopSchema.sdl, "{ pets { id name age owner { name } } }")
+
+    assertEquals(pets.name, None)
+  }
+
   test("an operation with no variables takes Unit") {
     val pets = operation[Unit, Pets]("{ pets { id name age owner { name } } }")
 

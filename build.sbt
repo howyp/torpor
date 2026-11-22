@@ -137,8 +137,34 @@ lazy val client = (project in file("modules/client"))
       "io.circe"      %% "circe-core"        % circeVersion,
       "org.typelevel" %% "munit-cats-effect" % "2.2.1"      % Test,
       "org.scalameta" %% "munit"             % munitVersion % Test
-    )
+    ),
+    // Each test schema as a Scala constant too, which is how a service keeps its operations in step with the schema
+    // file: the compiler tracks a source, so editing the file recompiles every operation stated against it.
+    Test / sourceGenerators += schemaConstants(Test / resourceDirectory, Test / sourceManaged, "net.andimiller.torpor.client").taskValue
   )
+
+/** `Name.graphqls` in `from` becomes `object NameSchema { inline val sdl = "…" }` in `into`, in the given package. */
+def schemaConstants(from: SettingKey[File], into: SettingKey[File], pkg: String): Def.Initialize[Task[Seq[File]]] =
+  Def.task {
+    (from.value * "*.graphqls").get.map { file =>
+      val name    = file.base.capitalize + "Schema"
+      val target  = into.value / "torpor" / s"$name.scala"
+      val escaped = IO.read(file).flatMap {
+        case '\\' => "\\\\"
+        case '"'  => "\\\""
+        case '\n' => "\\n"
+        case '\r' => "\\r"
+        case '\t' => "\\t"
+        case c    => c.toString
+      }
+      val quote   = "\""
+      IO.write(
+        target,
+        s"package $pkg\n\n/** `${file.getName}` as a constant, written by the build. */\nobject $name { inline val sdl = $quote$escaped$quote }\n"
+      )
+      target
+    }
+  }
 
 lazy val conformance = (project in file("modules/conformance"))
   .dependsOn(schema)

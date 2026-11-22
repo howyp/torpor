@@ -1,16 +1,23 @@
 package net.andimiller.torpor.client
 
+import net.andimiller.torpor.schema.Schema
+
 import scala.quoted.*
 
 object OperationMacro {
 
-  def impl[V: Type, D: Type](schemaFile: Expr[String], document: Expr[String])(using
+  def fromFile[V: Type, D: Type](schemaFile: Expr[String], document: Expr[String])(using
       Quotes
-  ): Expr[Operation[V, D]] = {
+  ): Expr[Operation[V, D]] =
+    impl[V, D](MacroSupport.schemaInFile(MacroSupport.schemaFile(schemaFile)), document)
+
+  def fromSdl[V: Type, D: Type](sdl: Expr[String], document: Expr[String])(using Quotes): Expr[Operation[V, D]] =
+    impl[V, D](MacroSupport.schemaInSdl(MacroSupport.schemaText(sdl)), document)
+
+  private def impl[V: Type, D: Type](schema: Schema, document: Expr[String])(using Quotes): Expr[Operation[V, D]] = {
     import quotes.reflect.*
 
-    val schema = MacroSupport.schema(MacroSupport.schemaFile(schemaFile))
-    val query  = MacroSupport.document(document)
+    val query = MacroSupport.document(document)
 
     Check.operation(schema, query, MacroSupport.shape(TypeRepr.of[V]), MacroSupport.shape(TypeRepr.of[D])) match {
       case Left(problems) =>

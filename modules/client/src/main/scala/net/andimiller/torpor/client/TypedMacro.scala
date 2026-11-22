@@ -16,14 +16,13 @@ object TypedMacro {
     * `@skip` or `@include`, is an `Option` too. A leaf is read as the type the [[Api]] binds it to, looked up first for
     * the field (`Pet.id`) and then for its type (`ID`).
     */
-  def typed[File <: String: Type, Bindings <: Tuple: Type](
-      api: Expr[Api[File, Bindings]],
+  def typed[Source <: Api.Source: Type, Bindings <: Tuple: Type](
+      api: Expr[Api[Source, Bindings]],
       document: Expr[String]
   )(using Quotes): Expr[TypedOperation[?, ?, ?]] = {
     import quotes.reflect.*
 
-    val file   = literalOf[File]
-    val schema = MacroSupport.schema(file)
+    val schema = MacroSupport.schema[Source]
     val query  = MacroSupport.document(document)
 
     def literal(value: String): TypeRepr = ConstantType(StringConstant(value))
@@ -171,32 +170,32 @@ object TypedMacro {
 
     // built untyped and then given its type, which is what a `transparent inline` caller sees
     val untyped = '{
-      new TypedOperation[String, Tuple, Any](
+      new TypedOperation[Api.Source, Tuple, Any](
         ${ Expr(query) },
         ${ Expr(operation.name) },
         $decoder.asInstanceOf[Decoder[Any]]
       )
     }
-    TypeRepr.of[TypedOperation].appliedTo(List(literal(file), variables, data)).asType match {
+    TypeRepr.of[TypedOperation].appliedTo(List(TypeRepr.of[Source], variables, data)).asType match {
       case '[t] => '{ $untyped.asInstanceOf[t] }.asExprOf[TypedOperation[?, ?, ?]]
     }
   }
 
   /** `operation(name = value, …)`: each value against the variable it is given for, then the request. */
-  def request[File <: String: Type, Variables <: Tuple: Type, D: Type](
-      operation: Expr[TypedOperation[File, Variables, D]],
+  def request[Source <: Api.Source: Type, Variables <: Tuple: Type, D: Type](
+      operation: Expr[TypedOperation[Source, Variables, D]],
       supplied: Expr[Seq[(String, Any)]]
   )(using Quotes): Expr[Request[D]] = {
-    requestOf[File, Variables, D](operation, named(supplied))
+    requestOf[Source, Variables, D](operation, named(supplied))
   }
 
-  private def requestOf[File <: String: Type, Variables <: Tuple: Type, D: Type](using q: Quotes)(
-      operation: Expr[TypedOperation[File, Variables, D]],
+  private def requestOf[Source <: Api.Source: Type, Variables <: Tuple: Type, D: Type](using q: Quotes)(
+      operation: Expr[TypedOperation[Source, Variables, D]],
       values: List[(String, q.reflect.TypeRepr, Expr[Option[Json]])]
   ): Expr[Request[D]] = {
     import q.reflect.*
 
-    val schema   = MacroSupport.schema(literalOf[File])
+    val schema   = MacroSupport.schema[Source]
     val check    = new Check(schema, net.andimiller.torpor.schema.ExecutableDocument(Nil, Nil))
     val declared = declaredVariables[Variables]
 
@@ -222,8 +221,8 @@ object TypedMacro {
   }
 
   /** `operation()`: allowed when no variable must be given a value. */
-  def requestWithout[File <: String: Type, Variables <: Tuple: Type, D: Type](
-      operation: Expr[TypedOperation[File, Variables, D]],
+  def requestWithout[Source <: Api.Source: Type, Variables <: Tuple: Type, D: Type](
+      operation: Expr[TypedOperation[Source, Variables, D]],
       supplied: Expr[Seq[Any]]
   )(using Quotes): Expr[Request[D]] = {
     import quotes.reflect.*
@@ -233,7 +232,7 @@ object TypedMacro {
         report.errorAndAbort("give an operation's variables by name: operation(name = value, …)")
       case _                                  => ()
     }
-    requestOf[File, Variables, D](operation, Nil)
+    requestOf[Source, Variables, D](operation, Nil)
   }
 
   /** `input(name = value, …)`: an [[InputObject]] whose type records each field and the type of its value. */
@@ -310,14 +309,6 @@ object TypedMacro {
       case Inlined(_, Nil, inner) => unascribed(inner)
       case Typed(inner, _)        => unascribed(inner)
       case other                  => other
-    }
-  }
-
-  private def literalOf[S <: String: Type](using Quotes): String = {
-    import quotes.reflect.*
-    TypeRepr.of[S].dealias match {
-      case ConstantType(StringConstant(value)) => value
-      case other                               => report.errorAndAbort(s"expected a literal string type, found ${other.show}")
     }
   }
 
