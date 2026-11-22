@@ -68,8 +68,8 @@ object Check {
       skippable: Boolean
   )
 
-  /** One response key of an object: the field the schema declares it as, its type, what is selected beneath it, and
-    * whether the response may leave it out.
+  /** One response key of an object: the field the schema declares it as, its type, what is selected beneath it, the
+    * worlds it is selected in, and whether the response may leave it out.
     */
   final case class Field(
       key: String,
@@ -77,6 +77,7 @@ object Check {
       name: String,
       tpe: TypeRef,
       beneath: Selections,
+      on: Set[World],
       conditional: Boolean
   )
 
@@ -280,6 +281,7 @@ final private[client] class Check(schema: Schema, document: ExecutableDocument) 
           name = first.name,
           tpe = first.tpe,
           beneath = Selections(first.tpe.named, occurrences.flatMap(_.beneath), within(on, first.tpe.named)),
+          on = on,
           conditional = occurrences.forall(_.skippable) || !selections.worlds.subsetOf(on)
         )
       })

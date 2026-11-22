@@ -38,6 +38,17 @@ final class TypedOperationSuite extends munit.FunSuite {
     assertEquals(nil.variables.toMap, Map("names" -> Json.arr()))
   }
 
+  test("a union has a view per member only when the document selects __typename to tell them apart") {
+    val tagged   =
+      petshop.operation("{ home(pet: \"1\") { __typename ... on Owner { name } ... on Shelter { capacity } } }")
+    val untagged = petshop.operation("{ home(pet: \"1\") { ... on Owner { name } ... on Shelter { capacity } } }")
+
+    val capacity: Option[Int] = Option.empty[tagged.Data].flatMap(_.home).flatMap(_.asShelter).map(_.capacity)
+    val errors                = compileErrors("""Option.empty[untagged.Data].flatMap(_.home).flatMap(_.asShelter)""")
+    assertEquals(capacity, None)
+    assert(errors.contains("asShelter"), errors)
+  }
+
   test("an enum variable takes a literal of its values, and not another") {
     val pets = petshop.operation("query P($species: Species) { pets(species: $species) { name } }")
 

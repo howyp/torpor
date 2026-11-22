@@ -149,6 +149,8 @@ The calling side: `torpor-client` checks an operation when the code that states 
 | The variables type checked: one field per declared variable, no `Option` for one that must be given a value, each field against the variable's type | yes |
 | Input object variables checked field by field | yes, for a case class; a type that is not a case class is taken on trust and its encoder decides |
 | `Api.at(file).operation(document)`: the response type written from the document, as a record with a member per selected field | yes |
+| A union or interface in a typed response: `__typename` as the literal names of its types, and a view per type (`asShelter`) when the document selects `__typename` and fields for some types | yes |
+| A union or interface read as a sealed trait with `Operation.checked`, one case class per type, each checked against its own fragment | yes; `__typename` must be selected |
 | Leaves read as the type the `Api` binds with `read`, for a field (`"Pet.id"`) or for its type (`"ID"`) | yes |
 | Variables given by name and checked against the declared ones, with optional ones left out; `None` and `Nil` as values; `null` sent as null | yes |
 | Input objects written with `input(…)` and checked against the schema's input type | yes; a list of differently-shaped inputs is taken on trust |

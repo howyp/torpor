@@ -221,11 +221,17 @@ final class GraphQLClientSuite extends munit.CatsEffectSuite {
       shown   <- graphql.run(home(id = "1", withCapacity = true))
       hidden  <- graphql.run(home(id = "1", withCapacity = false))
     } yield {
-      val name: Option[String]  = shown.home.map(_.name)
-      val capacity: Option[Int] = shown.home.flatMap(_.capacity)
-      assertEquals(shown.home.map(_.__typename), Some("Shelter"))
+      val name: Option[String]                  = shown.home.map(_.name)
+      val capacity: Option[Int]                 = shown.home.flatMap(_.capacity)
+      val typename: Option["Owner" | "Shelter"] = shown.home.map(_.__typename)
+      // the record as the type the server answered with: its own fields, read without the Option the union needs
+      val shelter: Option[String]               = shown.home.flatMap(_.asShelter).map(_.name)
+      assertEquals(typename, Option[String]("Shelter"))
       assertEquals(name, Some("Paws"))
       assertEquals(capacity, Some(40))
+      assertEquals(shelter, Some("Paws"))
+      assertEquals(shown.home.flatMap(_.asShelter).flatMap(_.capacity), Some(40))
+      assertEquals(shown.home.flatMap(_.asOwner), None)
       assertEquals(hidden.home.flatMap(_.capacity), None)
     }
   }
