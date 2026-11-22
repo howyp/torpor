@@ -27,12 +27,18 @@ enum Shape {
   /** The literal `null`: a value sent as null, as opposed to a `None`, which is left out. */
   case Null
 
+  /** One of these string literals: a literal such as `"DOG"`, or a union of them such as `"DOG" | "CAT"`, which is what
+    * an enum is read as.
+    */
+  case Literals(values: List[String])
+
   def render: String = this match {
-    case Null            => "null"
-    case Optional(of)    => s"Option[${of.render}]"
-    case Many(of)        => s"List[${of.render}]"
-    case Record(name, _) => name
-    case Leaf(name)      => name
-    case Trusted(name)   => name
+    case Null             => "null"
+    case Literals(values) => values.map(value => s"\"$value\"").mkString(" | ")
+    case Optional(of)     => s"Option[${of.render}]"
+    case Many(of)         => s"List[${of.render}]"
+    case Record(name, _)  => name
+    case Leaf(name)       => name
+    case Trusted(name)    => name
   }
 }

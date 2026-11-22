@@ -122,6 +122,30 @@ final class CheckSuite extends munit.FunSuite {
     )
   }
 
+  test("an enum is read as literals of its values, and a literal is a string elsewhere") {
+    def book(genre: Shape, title: Shape = Leaf("String"), pages: Shape = Optional(Leaf("Int"))): Shape =
+      shelves(
+        Record(
+          "Shelf",
+          List("items" -> Many(Record("Book", List("title" -> title, "genre" -> Optional(genre), "pages" -> pages))))
+        )
+      )
+    val document                                                                                       = "{ shelves { items { title ... on Book { genre pages } } } }"
+
+    assertEquals(problems(document, noVariables, book(Literals(List("FICTION", "SCIENCE")))), Nil)
+    assertEquals(problems(document, noVariables, book(Literals(List("FICTION")), title = Literals(List("Dune")))), Nil)
+    assertEquals(
+      problems(document, noVariables, book(Literals(List("FICTION", "ROMANCE")))),
+      List(
+        "query.shelves[].items[].genre is the enum Genre in the schema, but \"ROMANCE\" is not one of its values: FICTION, SCIENCE"
+      )
+    )
+    assertEquals(
+      problems(document, noVariables, book(Leaf("String"), pages = Optional(Literals(List("3"))))),
+      List("query.shelves[].items[].pages is a Int in the schema, so it is read as BigInt or Int or Long, not String")
+    )
+  }
+
   test("an interface's own field is always there, and one implementer's field is not") {
     def item(pages: Shape): Shape =
       shelves(Record("Shelf", List("items" -> Many(Record("Item", List("title" -> Leaf("String"), "pages" -> pages))))))

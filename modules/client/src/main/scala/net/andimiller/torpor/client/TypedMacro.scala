@@ -26,6 +26,8 @@ object TypedMacro {
     val schema = MacroSupport.schema(file)
     val query  = MacroSupport.document(document)
 
+    def literal(value: String): TypeRepr = ConstantType(StringConstant(value))
+
     val bindings: Map[String, TypeRepr] = {
       def each(tpe: TypeRepr): List[(String, TypeRepr)] = tpe.dealias match {
         case AppliedType(_, List(AppliedType(_, List(name, bound)), rest)) =>
@@ -48,24 +50,37 @@ object TypedMacro {
     }
     val check     = new Check(schema, validated.document)
 
-    def literal(value: String): TypeRepr = ConstantType(StringConstant(value))
-
     def tuple(elements: List[TypeRepr]): TypeRepr =
       elements.foldRight(TypeRepr.of[EmptyTuple])((element, rest) => TypeRepr.of[*:].appliedTo(List(element, rest)))
 
-    /** The type a leaf is read as, and its decoder: the one the API was given for a binding, or circe's own. */
+    /** A union of string literals, such as `"DOG" | "CAT"`, and a decoder that accepts only those. */
+    def oneOf(values: List[String], what: String): (TypeRepr, Expr[Decoder[?]]) = {
+      val tpe      = values.map(value => literal(value)).reduceLeft[TypeRepr](OrType(_, _))
+      val expected = Expr(values)
+      val decoder  = '{
+        Decoder.decodeString.emap { value =>
+          if ($expected.contains(value)) Right(value)
+          else Left(s"$value is not a value of ${${ Expr(what) }}: ${$expected.mkString(", ")}")
+        }
+      }
+      (tpe, decoder)
+    }
+
+    /** The type a leaf is read as, and its decoder: the one the API was given for a binding, or circe's own. An enum
+      * unbound is the union of its values as literals.
+      */
     def leaf(field: Check.Field, name: String): (TypeRepr, Expr[Decoder[?]]) =
       List(s"${field.owner}.${field.name}", name).find(bindings.contains) match {
         case Some(key) => (bindings(key), '{ $api.decoders(${ Expr(key) }) })
         case None      =>
-          name match {
-            case "Int"                                                           => (TypeRepr.of[Int], '{ Decoder.decodeInt })
-            case "Float"                                                         => (TypeRepr.of[Double], '{ Decoder.decodeDouble })
-            case "Boolean"                                                       => (TypeRepr.of[Boolean], '{ Decoder.decodeBoolean })
-            case "String" | "ID"                                                 => (TypeRepr.of[String], '{ Decoder.decodeString })
-            case _ if schema.types.get(name).exists(_.kind == TypeKind.EnumType) =>
-              (TypeRepr.of[String], '{ Decoder.decodeString })
-            case _                                                               => (TypeRepr.of[Json], '{ Decoder.decodeJson })
+          (name, schema.types.get(name)) match {
+            case ("Int", _)                                                    => (TypeRepr.of[Int], '{ Decoder.decodeInt })
+            case ("Float", _)                                                  => (TypeRepr.of[Double], '{ Decoder.decodeDouble })
+            case ("Boolean", _)                                                => (TypeRepr.of[Boolean], '{ Decoder.decodeBoolean })
+            case ("String" | "ID", _)                                          => (TypeRepr.of[String], '{ Decoder.decodeString })
+            case (_, Some(definition)) if definition.kind == TypeKind.EnumType =>
+              oneOf(definition.enumValues.map(_.name), s"enum $name")
+            case _                                                             => (TypeRepr.of[Json], '{ Decoder.decodeJson })
           }
       }
 
@@ -226,9 +241,10 @@ object TypedMacro {
     pairs.map {
       case '{ ($name: String, $value: Any) } =>
         val key = name.value.filter(_.nonEmpty).getOrElse(report.errorAndAbort("give each value by name: name = value"))
-        // the pair is typed `(String, Any)`, so the value's own type is read off its tree
-        val tpe = unascribed(value.asTerm).tpe.widen
-        (key, tpe, encoded(key, tpe, value))
+        // the pair is typed `(String, Any)`, so the value's own type is read off its tree; a literal keeps its type,
+        // which is how `"DOG"` is checked against an enum
+        val tpe = unascribed(value.asTerm).tpe.widenTermRefByName
+        (key, tpe, encoded(key, tpe.widen, value))
       case other                             =>
         report.errorAndAbort(s"give each value by name: name = value (found ${other.show})")
     }

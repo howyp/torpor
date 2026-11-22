@@ -22,8 +22,9 @@ import net.andimiller.torpor.schema.{
   *   - a nullable field is an `Option`; so is a field selected inside a fragment that only some types match, or behind
   *     `@skip` or `@include`, because the response may not carry it;
   *   - a list is a collection;
-  *   - `String`, `Boolean`, `Int` and `Float` are read as the Scala types that hold them. Every other scalar and every
-  *     enum may be read as any type that is not a case class or a collection: its decoder decides.
+  *   - `String`, `Boolean`, `Int` and `Float` are read as the Scala types that hold them. An enum may be read as a
+  *     union of its values as string literals, such as `"DOG" | "CAT"`, or as `String`. Every other scalar may be read
+  *     as any type that is not a case class or a collection: its decoder decides.
   *
   * And for the type the variables are written as: a case class with one field per variable the operation declares,
   * where a variable that must be given a value is not an `Option`, and each field fits the variable's type the way a
@@ -167,12 +168,22 @@ final private[client] class Check(schema: Schema, document: ExecutableDocument) 
 
   private def leaf(name: String, shape: Shape, path: String, verb: String = "read"): List[String] =
     shape match {
-      case Shape.Trusted(_)  => Nil
-      case Shape.Leaf(scala) =>
+      case Shape.Trusted(_)         => Nil
+      case Shape.Leaf(scala)        =>
         leaves.get(name).filterNot(_.contains(scala)).toList.map { allowed =>
           s"$path is a $name in the schema, so it is $verb as ${allowed.toList.sorted.mkString(" or ")}, not $scala"
         }
-      case other             =>
+      // a literal is a string, unless the type is an enum: then each literal is one of its values
+      case Shape.Literals(literals) =>
+        schema.types.get(name).filter(_.kind == TypeKind.EnumType) match {
+          case None             => leaf(name, Shape.Leaf("String"), path, verb)
+          case Some(definition) =>
+            val values = definition.enumValues.map(_.name)
+            literals.filterNot(values.contains).map { literal =>
+              s"$path is the enum $name in the schema, but \"$literal\" is not one of its values: ${values.mkString(", ")}"
+            }
+        }
+      case other                    =>
         List(s"$path is the scalar or enum $name in the schema, so it cannot be $verb as ${other.render}")
     }
 

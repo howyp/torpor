@@ -1,6 +1,7 @@
 package net.andimiller.torpor.client
 
 import io.circe.{Decoder, Encoder}
+import net.andimiller.torpor.client.Literals.given
 
 final case class PetsVariables(species: Option[String], first: Option[Int]) derives Encoder.AsObject
 final case class Pets(pets: List[Pet]) derives Decoder
@@ -23,6 +24,10 @@ object Names {
   given Decoder[Name]           = Decoder.decodeString
 }
 final case class PetAgeAndName(name: Names.Name, age: Option[Age]) derives Decoder
+final case class PetSpecies(species: "DOG" | "CAT") derives Decoder
+final case class PetsSpecies(pets: List[PetSpecies]) derives Decoder
+final case class PetBird(species: "BIRD" | "CAT") derives Decoder
+final case class PetsBird(pets: List[PetBird]) derives Decoder
 final case class PetsAgeAndName(pets: List[PetAgeAndName]) derives Decoder
 final case class OnePetWithId(pet: Option[PetWithId]) derives Decoder
 
@@ -80,6 +85,16 @@ final class OperationSuite extends munit.FunSuite {
     val pets = operation[Unit, PetsAgeAndName]("{ pets { name age } }")
 
     assertEquals(pets.name, None)
+  }
+
+  test("an enum is read as a union of literals of its values, and not of others") {
+    val pets   = operation[Unit, PetsSpecies]("{ pets { species } }")
+    val errors = compileErrors(
+      """Operation.checked[Unit, PetsBird]("modules/client/src/test/resources/petshop.graphqls", "{ pets { species } }")"""
+    )
+
+    assertEquals(pets.name, None)
+    assert(errors.contains("but \"BIRD\" is not one of its values: DOG, CAT"), errors)
   }
 
   test("an operation may interpolate a selection that several operations share") {

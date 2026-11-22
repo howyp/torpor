@@ -6,6 +6,7 @@ import io.circe.Json
 final class TypedOperationSuite extends munit.FunSuite {
 
   private val library = Api.at("modules/client/src/test/resources/library.graphqls")
+  private val petshop = Api.at("modules/client/src/test/resources/petshop.graphqls")
 
   private val shelves = library.operation(
     """
@@ -35,6 +36,17 @@ final class TypedOperationSuite extends munit.FunSuite {
 
     assertEquals(none.variables.toMap, Map("names" -> Json.arr(Json.fromString("fiction"))))
     assertEquals(nil.variables.toMap, Map("names" -> Json.arr()))
+  }
+
+  test("an enum variable takes a literal of its values, and not another") {
+    val pets = petshop.operation("query P($species: Species) { pets(species: $species) { name } }")
+
+    assertEquals(pets(species = "DOG").variables.toMap.get("species"), Some(Json.fromString("DOG")))
+    val errors = compileErrors("""pets(species = "BIRD")""")
+    assert(
+      errors.contains("$species is the enum Species in the schema, but \"BIRD\" is not one of its values: DOG, CAT"),
+      errors
+    )
   }
 
   test("null is sent as null, where None is left out") {
@@ -113,7 +125,7 @@ final class TypedOperationSuite extends munit.FunSuite {
   test("a value of the wrong kind for a variable does not compile") {
     val errors = compileErrors("""shelves(names = "fiction", first = "two")""")
 
-    assert(errors.contains("$names is a list in the schema, so it is written as a collection, not String"), errors)
+    assert(errors.contains("$names is a list in the schema, so it is written as a collection, not \"fiction\""), errors)
     assert(
       errors.contains("$first is a Int in the schema, so it is written as BigInt or Int or Long, not String"),
       errors

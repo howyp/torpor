@@ -79,6 +79,16 @@ private[client] object MacroSupport {
   // collections that are not an `Iterable`, by the name of their class
   private val collections = Set("NonEmptyList", "NonEmptyVector", "NonEmptyChain", "NonEmptySeq", "Chain")
 
+  /** The string literals a type is a union of, if it is one: `"DOG"`, or `"DOG" | "CAT"`. */
+  def literals(using q: Quotes)(tpe: q.reflect.TypeRepr): Option[List[String]] = {
+    import q.reflect.*
+    tpe.dealias match {
+      case ConstantType(StringConstant(value)) => Some(List(value))
+      case OrType(left, right)                 => (literals(left), literals(right)).mapN(_ ++ _)
+      case _                                   => None
+    }
+  }
+
   /** The shape of a type: see [[Shape]]. An `InputObject` built with `input(…)` is a record of the fields it was given.
     * A value class is the shape of the one value it wraps, and an opaque type is taken on trust: its own codec decides.
     */
@@ -105,6 +115,8 @@ private[client] object MacroSupport {
       val dealiased = tpe.dealias
       val symbol    = dealiased.typeSymbol
       dealiased match {
+        case _ if literals(dealiased).isDefined                                                       =>
+          Shape.Literals(literals(dealiased).get)
         case _ if dealiased =:= TypeRepr.of[Null]                                                     =>
           Shape.Null
         // the element type of `Nil`, and what `None` holds: a value of it fits anywhere
