@@ -14,8 +14,9 @@ final class CheckSuite extends munit.FunSuite {
           """enum Genre { FICTION SCIENCE }
             |scalar Date
             |interface Item { id: ID! title: String! }
-            |type Book implements Item { id: ID! title: String! pages: Int! genre: Genre! published: Date rating: Float }
-            |type Film implements Item { id: ID! title: String! minutes: Int! }
+            |type Person { name: String! born: Int }
+            |type Book implements Item { id: ID! title: String! pages: Int! genre: Genre! published: Date rating: Float author: Person! }
+            |type Film implements Item { id: ID! title: String! minutes: Int! author: Person! }
             |type Shelf { name: String! items: [Item!]! featured: Item tags: [String]! }
             |type Query { shelf(name: String!): Shelf shelves(first: Int = 10): [Shelf!]! }
             |type Mutation { rename(name: String!, to: String!): Shelf }
@@ -143,6 +144,41 @@ final class CheckSuite extends munit.FunSuite {
     )
   }
 
+  test("one response key with two types across fragments cannot be read as one field") {
+    val data     = shelves(Record("Shelf", List("items" -> Many(Record("Item", List("x" -> Leaf("String")))))))
+    val document = "{ shelves { items { x: title ... on Book { x: pages } } } }"
+
+    assertEquals(
+      problems(document, noVariables, data),
+      List("query.shelves[].items[].x is String! on Item and Int! on Book, so it cannot be read as one field")
+    )
+  }
+
+  test("a field selected beneath one member's fragment is an Option, even when its parent is not") {
+    def item(name: Shape): Shape =
+      shelves(
+        Record(
+          "Shelf",
+          List(
+            "items" -> Many(
+              Record("Item", List("author" -> Record("Person", List("name" -> name, "born" -> Optional(Leaf("Int"))))))
+            )
+          )
+        )
+      )
+    val oneSide                  = "{ shelves { items { ... on Book { author { name } } ... on Film { author { born } } } } }"
+    val bothSides                = "{ shelves { items { ... on Book { author { name } } ... on Film { author { name born } } } } }"
+
+    assertEquals(
+      problems(oneSide, noVariables, item(Leaf("String"))),
+      List(
+        "query.shelves[].items[].author.name is only in the response for some types or conditions, so it is read as an Option, not String"
+      )
+    )
+    assertEquals(problems(oneSide, noVariables, item(Optional(Leaf("String")))), Nil)
+    assertEquals(problems(bothSides, noVariables, item(Leaf("String"))), Nil)
+  }
+
   test("a field behind @include may be missing") {
     val data      = shelves(Record("Shelf", List("name" -> Leaf("String"))))
     val variables = Record("Variables", List("named" -> Leaf("Boolean")))
@@ -216,6 +252,21 @@ final class CheckSuite extends munit.FunSuite {
         data
       ),
       Nil
+    )
+  }
+
+  test("a variable's field is checked against the variable's type") {
+    val data     = shelves(Record("Shelf", List("name" -> Leaf("String"))))
+    val document = "query Q($first: Int) { shelves(first: $first) { name } }"
+
+    assertEquals(problems(document, Record("Variables", List("first" -> Optional(Leaf("Long")))), data), Nil)
+    assertEquals(
+      problems(document, Record("Variables", List("first" -> Optional(Leaf("String")))), data),
+      List("Variables.first is a Int in the schema, so it is written as BigInt or Int or Long, not String")
+    )
+    assertEquals(
+      problems(document, Record("Variables", List("first" -> Many(Leaf("Int")))), data),
+      List("Variables.first is the scalar or enum Int in the schema, so it cannot be written as List[Int]")
     )
   }
 

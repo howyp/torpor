@@ -1,7 +1,7 @@
 package net.andimiller.torpor.client
 
 import io.circe.{Decoder, Encoder, Json, JsonObject}
-import net.andimiller.torpor.schema.{Executable, Selection, TypeKind, TypeRef as GqlType}
+import net.andimiller.torpor.schema.{Executable, TypeKind, TypeRef as GqlType}
 
 import scala.quoted.*
 
@@ -69,11 +69,18 @@ object TypedMacro {
           }
       }
 
-    def record(parent: String, selections: List[(String, Selection)], path: String): (TypeRepr, Expr[Decoder[?]]) = {
-      val fields  = check.fields(parent, selections).map { field =>
-        val (tpe, decoder) = value(field, field.tpe, field.conditional, s"$path.${field.key}")
-        (field.key, tpe, decoder)
-      }
+    def record(selections: Check.Selections, path: String): (TypeRepr, Expr[Decoder[?]]) = {
+      val fields  = check
+        .fields(selections, path)
+        .fold(
+          conflicts =>
+            report.errorAndAbort(conflicts.mkString("the operation does not fit the schema:\n  ", "\n  ", "")),
+          identity
+        )
+        .map { field =>
+          val (tpe, decoder) = value(field, field.tpe, field.conditional, s"$path.${field.key}")
+          (field.key, tpe, decoder)
+        }
       val refined = fields.foldLeft(TypeRepr.of[Record]) { case (record, (key, tpe, _)) =>
         Refinement(record, key, tpe)
       }
@@ -101,7 +108,7 @@ object TypedMacro {
         case GqlType.Named(name) =>
           schema.types.get(name).map(_.kind) match {
             case Some(TypeKind.ObjectType | TypeKind.InterfaceType | TypeKind.UnionType) =>
-              record(name, field.selections, path)
+              record(field.beneath, path)
             case _                                                                       => leaf(field, name)
           }
       }
@@ -109,7 +116,7 @@ object TypedMacro {
     val operation = validated.operation
     val root      = check.root(operation).getOrElse(report.errorAndAbort(s"the schema has no ${operation.kind.label} type"))
 
-    val (data, decoder) = record(root, operation.selections.map(root -> _), operation.kind.label)
+    val (data, decoder) = record(root, operation.kind.label)
     val variables       = tuple(operation.variables.map { variable =>
       TypeRepr
         .of[Tuple3]
@@ -221,16 +228,27 @@ object TypedMacro {
         val key = name.value.filter(_.nonEmpty).getOrElse(report.errorAndAbort("give each value by name: name = value"))
         // the pair is typed `(String, Any)`, so the value's own type is read off its tree
         val tpe = unascribed(value.asTerm).tpe.widen
-        tpe.asType match {
-          case '[t] =>
-            Expr.summon[Encoder[t]] match {
-              case Some(encoder) => (key, tpe, '{ $encoder(${ value.asExprOf[t] }) })
-              case None          => report.errorAndAbort(s"'$key' is a ${tpe.show}, which has no Encoder in scope")
-            }
-        }
+        (key, tpe, encoded(key, tpe, value))
       case other                             =>
         report.errorAndAbort(s"give each value by name: name = value (found ${other.show})")
     }
+  }
+
+  /** The value as JSON, with the `Encoder` in scope for its type. `Nil` and `None` have no element to encode, so they
+    * are written as what they are: an empty list and nothing.
+    */
+  private def encoded(using q: Quotes)(key: String, tpe: q.reflect.TypeRepr, value: Expr[Any]): Expr[Json] = {
+    import q.reflect.*
+    if (tpe <:< TypeRepr.of[Iterable[Nothing]]) '{ Json.arr() }
+    else if (tpe <:< TypeRepr.of[Option[Nothing]]) '{ Json.Null }
+    else
+      tpe.asType match {
+        case '[t] =>
+          Expr.summon[Encoder[t]] match {
+            case Some(encoder) => '{ $encoder(${ value.asExprOf[t] }) }
+            case None          => report.errorAndAbort(s"'$key' is a ${tpe.show}, which has no Encoder in scope")
+          }
+      }
   }
 
   private def unascribed(using q: Quotes)(term: q.reflect.Term): q.reflect.Term = {

@@ -29,6 +29,25 @@ final class TypedOperationSuite extends munit.FunSuite {
     assertEquals(request.variables.toMap, Map("names" -> Json.arr(Json.fromString("fiction"))))
   }
 
+  test("None and Nil are values too: nothing, and an empty list") {
+    val none = shelves(names = List("fiction"), first = None, filter = None)
+    val nil  = shelves(names = Nil)
+
+    assertEquals(none.variables.toMap, Map("names" -> Json.arr(Json.fromString("fiction"))))
+    assertEquals(nil.variables.toMap, Map("names" -> Json.arr()))
+  }
+
+  test("one response key with two types across fragments does not compile") {
+    val errors = compileErrors(
+      """Api.at("modules/client/src/test/resources/petshop.graphqls").operation("{ home(pet: \"1\") { ... on Owner { x: name } ... on Shelter { x: capacity } } }")"""
+    )
+
+    assert(
+      errors.contains("query.home.x is String! on Owner and Int! on Shelter, so it cannot be read as one field"),
+      errors
+    )
+  }
+
   test("an input object is written with input(…), with fields it does not need left out") {
     val request = shelves(names = List("fiction"), filter = input(genre = "FICTION", minItems = Option.empty[Int]))
 

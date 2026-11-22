@@ -104,6 +104,9 @@ private[client] object MacroSupport {
       val dealiased = tpe.dealias
       val symbol    = dealiased.typeSymbol
       dealiased match {
+        // the element type of `Nil`, and what `None` holds: a value of it fits anywhere
+        case _ if dealiased =:= TypeRepr.of[Nothing]                                                  =>
+          Shape.Leaf("Nothing")
         // `Some(1)` and `None` are options too
         case _ if dealiased <:< TypeRepr.of[Option[Any]]                                              =>
           dealiased.baseType(optionSymbol) match {

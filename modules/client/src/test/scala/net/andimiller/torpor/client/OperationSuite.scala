@@ -15,6 +15,9 @@ final case class PetWithId(id: PetId) derives Decoder
 final case class OnePetWithId(pet: Option[PetWithId]) derives Decoder
 
 final case class PetVariables(id: String) derives Encoder.AsObject
+final case class WrongPetsVariables(species: Option[String], first: Option[String]) derives Encoder.AsObject
+final case class HomeX(x: String) derives Decoder
+final case class HomeOfX(home: Option[HomeX]) derives Decoder
 final case class OptionalPetVariables(id: Option[String]) derives Encoder.AsObject
 final case class OnePet(pet: Option[PetName]) derives Decoder
 final case class PetName(name: String) derives Decoder
@@ -146,6 +149,30 @@ final class OperationSuite extends munit.FunSuite {
     assert(errors.contains("PetsVariables has no field for the variable '$id'"), errors)
     assert(
       errors.contains("PetsVariables has a field 'species', but the operation declares no variable '$species'"),
+      errors
+    )
+  }
+
+  test("a variable field of the wrong type does not compile") {
+    val errors = compileErrors(
+      """Operation.checked[WrongPetsVariables, Pets]("modules/client/src/test/resources/petshop.graphqls", "query Pets($species: Species, $first: Int) { pets(species: $species, first: $first) { id name age owner { name } } }")"""
+    )
+
+    assert(
+      errors.contains(
+        "WrongPetsVariables.first is a Int in the schema, so it is written as BigInt or Int or Long, not String"
+      ),
+      errors
+    )
+  }
+
+  test("one response key with two types across fragments does not compile") {
+    val errors = compileErrors(
+      """Operation.checked[PetVariables, HomeOfX]("modules/client/src/test/resources/petshop.graphqls", "query H($id: ID!) { home(pet: $id) { ... on Owner { x: name } ... on Shelter { x: capacity } } }")"""
+    )
+
+    assert(
+      errors.contains("query.home.x is String! on Owner and Int! on Shelter, so it cannot be read as one field"),
       errors
     )
   }
