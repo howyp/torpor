@@ -80,6 +80,7 @@ private[client] object MacroSupport {
   private val collections = Set("NonEmptyList", "NonEmptyVector", "NonEmptyChain", "NonEmptySeq", "Chain")
 
   /** The shape of a type: see [[Shape]]. An `InputObject` built with `input(…)` is a record of the fields it was given.
+    * A value class is the shape of the one value it wraps, and an opaque type is taken on trust: its own codec decides.
     */
   def shape(using q: Quotes)(tpe: q.reflect.TypeRepr): Shape = {
     import q.reflect.*
@@ -106,7 +107,15 @@ private[client] object MacroSupport {
       dealiased match {
         // the element type of `Nil`, and what `None` holds: a value of it fits anywhere
         case _ if dealiased =:= TypeRepr.of[Nothing]                                                  =>
-          Shape.Leaf("Nothing")
+          Shape.Trusted("Nothing")
+        // an opaque type cannot be seen through from here, so its own codec decides what it reads and writes
+        case _ if symbol.flags.is(Flags.Opaque)                                                       =>
+          Shape.Trusted(symbol.name)
+        // a value class wraps one value, such as an id: it is read and written as that value, by its own codec
+        case _
+            if symbol.isClassDef && symbol.flags.is(Flags.Case) && dealiased <:< TypeRepr.of[AnyVal] &&
+              symbol.caseFields.size == 1 =>
+          of(dealiased.memberType(symbol.caseFields.head), within)
         // `Some(1)` and `None` are options too
         case _ if dealiased <:< TypeRepr.of[Option[Any]]                                              =>
           dealiased.baseType(optionSymbol) match {
@@ -125,11 +134,8 @@ private[client] object MacroSupport {
             case AppliedType(_, List(of1)) => Shape.Many(of(of1, within))
             case _                         => Shape.Leaf(symbol.name)
           }
-        // a value class wraps one value, such as an id, so its own codec reads it
         // a recursive case class is checked once: beneath itself it is taken on trust
-        case _
-            if symbol.isClassDef && symbol.flags.is(Flags.Case) && !within(symbol.fullName) &&
-              !(dealiased <:< TypeRepr.of[AnyVal]) =>
+        case _ if symbol.isClassDef && symbol.flags.is(Flags.Case) && !within(symbol.fullName)        =>
           Shape.Record(
             symbol.name,
             symbol.caseFields.map(field => field.name -> of(dealiased.memberType(field), within + symbol.fullName))

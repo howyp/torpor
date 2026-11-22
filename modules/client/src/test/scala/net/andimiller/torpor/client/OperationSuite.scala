@@ -12,6 +12,18 @@ object PetId {
   given Decoder[PetId] = Decoder.decodeString.map(PetId(_))
 }
 final case class PetWithId(id: PetId) derives Decoder
+
+final case class Age(years: Int) extends AnyVal
+object Age   {
+  given Decoder[Age] = Decoder.decodeInt.map(Age(_))
+}
+object Names {
+  opaque type Name = String
+  def apply(name: String): Name = name
+  given Decoder[Name]           = Decoder.decodeString
+}
+final case class PetAgeAndName(name: Names.Name, age: Option[Age]) derives Decoder
+final case class PetsAgeAndName(pets: List[PetAgeAndName]) derives Decoder
 final case class OnePetWithId(pet: Option[PetWithId]) derives Decoder
 
 final case class PetVariables(id: String) derives Encoder.AsObject
@@ -62,6 +74,12 @@ final class OperationSuite extends munit.FunSuite {
     val pet = operation[PetVariables, OnePetWithId]("query P($id: ID!) { pet(id: $id) { id } }")
 
     assertEquals(pet.name, Some("P"))
+  }
+
+  test("a value class is read as the value it wraps, and an opaque type as whatever its codec reads") {
+    val pets = operation[Unit, PetsAgeAndName]("{ pets { name age } }")
+
+    assertEquals(pets.name, None)
   }
 
   test("an operation may interpolate a selection that several operations share") {

@@ -111,6 +111,17 @@ final class CheckSuite extends munit.FunSuite {
     )
   }
 
+  test("a type taken on trust is read as any leaf, but not as an object") {
+    val leaf   = shelves(Record("Shelf", List("name" -> Trusted("Name"))))
+    val record = Record("Shelves", List("shelves" -> Many(Trusted("Shelf"))))
+
+    assertEquals(problems("{ shelves { name } }", noVariables, leaf), Nil)
+    assertEquals(
+      problems("{ shelves { name } }", noVariables, record),
+      List("query.shelves[] is the object type Shelf in the schema, so it is read as a case class, not Shelf")
+    )
+  }
+
   test("an interface's own field is always there, and one implementer's field is not") {
     def item(pages: Shape): Shape =
       shelves(Record("Shelf", List("items" -> Many(Record("Item", List("title" -> Leaf("String"), "pages" -> pages))))))

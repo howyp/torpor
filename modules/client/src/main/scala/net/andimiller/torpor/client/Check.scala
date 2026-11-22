@@ -100,8 +100,6 @@ object Check {
     "Float"   -> Set("Double", "Float", "BigDecimal")
   )
 
-  /** The type of `None` and of the elements of `Nil`: a value of it fits anywhere. */
-  private val nothing = "Nothing"
 }
 
 final private[client] class Check(schema: Schema, document: ExecutableDocument) {
@@ -169,6 +167,7 @@ final private[client] class Check(schema: Schema, document: ExecutableDocument) 
 
   private def leaf(name: String, shape: Shape, path: String, verb: String = "read"): List[String] =
     shape match {
+      case Shape.Trusted(_)  => Nil
       case Shape.Leaf(scala) =>
         leaves.get(name).filterNot(_.contains(scala)).toList.map { allowed =>
           s"$path is a $name in the schema, so it is $verb as ${allowed.toList.sorted.mkString(" or ")}, not $scala"
@@ -193,7 +192,7 @@ final private[client] class Check(schema: Schema, document: ExecutableDocument) 
 
   private def inputValue(tpe: TypeRef, shape: Shape, path: String): List[String] =
     (tpe, shape) match {
-      case (_, Shape.Leaf(`nothing`))                => Nil
+      case (_, Shape.Trusted(_))                     => Nil
       case (TypeRef.NonNull(of), other)              => inputValue(of, other, path)
       case (TypeRef.ListOf(of), Shape.Many(element)) => input(of, hasDefault = false, Some(element), s"$path[]")
       case (TypeRef.ListOf(_), other)                =>
