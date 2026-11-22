@@ -225,7 +225,7 @@ final class GraphQLClientSuite extends munit.CatsEffectSuite {
   test("a variable given as None is left out of the request") {
     val pets = petshop.operation("query Pets($first: Int) { pets(first: $first) { name } }")
 
-    assertEquals(pets(first = Option.empty[Int]).variables.toMap, Map.empty)
+    assertEquals(pets(first = None).variables.toMap, Map.empty)
     assertEquals(pets(first = 2).variables.toMap.view.mapValues(_.noSpaces).toMap, Map("first" -> "2"))
   }
 }

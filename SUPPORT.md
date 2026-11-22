@@ -141,17 +141,18 @@ The calling side: `torpor-client` checks an operation when the code that states 
 | The schema file found from the working directory, or from any directory above the calling source | yes |
 | The response type checked: a case class per object, with exactly the selected response keys | yes |
 | Nullable fields, and fields a fragment or `@skip`/`@include` may leave out, required to be `Option` | yes |
-| A field selected for every member of a union or interface read without `Option` | yes |
+| A field selected for every member of a union or interface read without `Option` | yes; a field beneath an object that only one member's fragment selects is an `Option` too |
+| One response key selected with different types in different fragments | rejected: the validator leaves cross-fragment merging out, so the client checks it |
 | Lists required to be collections; `String`, `Boolean`, `Int`, `Float` checked against the Scala type | yes |
 | Enums, ids and custom scalars | not checked: read as any type that is not a case class or a collection, whose decoder decides |
-| The variables type checked: one field per declared variable, no `Option` for one that must be given a value | yes |
-| Input object variables checked field by field | no: the encoder decides |
+| The variables type checked: one field per declared variable, no `Option` for one that must be given a value, each field against the variable's type | yes |
+| Input object variables checked field by field | yes, for a case class; a type that is not a case class is taken on trust and its encoder decides |
 | `Api.at(file).operation(document)`: the response type written from the document, as a record with a member per selected field | yes |
 | Leaves read as the type the `Api` binds with `read`, for a field (`"Pet.id"`) or for its type (`"ID"`) | yes |
-| Variables given by name and checked against the declared ones, with optional ones left out | yes |
+| Variables given by name and checked against the declared ones, with optional ones left out; `None` and `Nil` as values | yes |
 | Input objects written with `input(…)` and checked against the schema's input type | yes; a list of differently-shaped inputs is taken on trust |
 | A type of the caller's own standing for a whole input object, encoded by its own `Encoder` | yes |
 | Enum values as a literal union in the response | no: an unbound enum is a `String` |
-| Running an operation over http4s, with response errors raised as `GraphQLFailure` | yes |
+| Running an operation over http4s, with response errors raised as `GraphQLFailure`, from a 4xx or 5xx as well as a 200 | yes |
 | Partial data alongside errors | no: any error fails the call |
 | Subscriptions, `@defer`, persisted queries | no |
